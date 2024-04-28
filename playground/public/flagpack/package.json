@@ -1,0 +1,33 @@
+{
+  "name": "flagpack",
+  "version": "1.0.5",
+  "description": "A lightweight flag icon toolkit for the web",
+  "main": "builder.js",
+  "author": "Jack Marsh",
+  "license": "MIT",
+  "homepage": "https://flag.pk/world",
+  "scripts": {
+    "compile:sass": "node builder.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jackiboy/flagpack.git"
+  },
+  "bugs": {
+    "url": "https://github.com/jackiboy/flagpack/issues"
+  },
+  "keywords": [
+    "flag",
+    "flags",
+    "country flags",
+    "svg",
+    "sass",
+    "scss",
+    "web",
+    "lightweight",
+    "small"
+  ],
+  "devDependencies": {
+    "node-sass": "^4.14.0"
+  }
+}

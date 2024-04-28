@@ -1,0 +1,3 @@
+[submodule "public/flagpack"]
+	path = public/flagpack
+	url = git@github.com:Jannchie/flagpack.git
