@@ -1,0 +1,23 @@
+{
+  "name": "anichart-v4",
+  "type": "module",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@jannchie/eslint-config": "^3.0.0",
+    "dayjs": "^1.11.10",
+    "eslint": "^8.57.0",
+    "pixi.js": "^8.0.4"
+  },
+  "devDependencies": {
+    "@types/d3": "^7.4.3",
+    "d3": "^7.9.0",
+    "typescript": "^5.4.3",
+    "vite": "^5.2.6"
+  }
+}

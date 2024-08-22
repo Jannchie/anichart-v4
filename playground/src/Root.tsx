@@ -6,7 +6,7 @@ export const RemotionRoot: React.FC = () => {
     <Composition
       id="AniComp"
       component={BaseComposition}
-      durationInFrames={60 * 10}
+      durationInFrames={60 * 60}
       fps={60}
       width={1920}
       height={1080}
