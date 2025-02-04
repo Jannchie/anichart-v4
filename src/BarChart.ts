@@ -1,8 +1,8 @@
-import { Container, Graphics, Sprite, Text } from 'pixi.js'
-import { InternSet, blur, extent, scaleLinear } from 'd3'
-import { BarComponent } from './bar'
-import type { Data } from './Data'
 import type { Config } from './Config'
+import type { Data } from './Data'
+import { blur, extent, InternSet, scaleLinear } from 'd3'
+import { Container, Graphics, Sprite, Text } from 'pixi.js'
+import { BarComponent } from './bar'
 import { textureMap } from './main'
 
 function getValueScale(type: string, min?: number, max?: number, delta: number = 1000) {

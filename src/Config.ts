@@ -1,6 +1,6 @@
+import type { Data } from './Data'
 import dayjs from 'dayjs'
 import { colorMap, colors } from './main'
-import type { Data } from './Data'
 
 interface IConfig {
   canvasWidth: number

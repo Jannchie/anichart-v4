@@ -1,8 +1,8 @@
 /* eslint-disable no-console */
 import type { DSVRowArray, InternMap, ScaleLinear } from 'd3'
-import { InternSet, blur, csv, extent, group, interpolate, range, scaleLinear } from 'd3'
-import type { Data } from './Data'
 import type { Config } from './Config'
+import type { Data } from './Data'
+import { blur, csv, extent, group, InternSet, interpolate, range, scaleLinear } from 'd3'
 
 export class DataProcessor {
   static async processCSV(path: string, config: Config): Promise<Data[][]> {
