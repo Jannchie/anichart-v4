@@ -247,11 +247,11 @@ export class DataProcessor {
         raw: any
       }>().domain(group.map(d => d.step)).range(group).clamp(true).interpolate((a, b) => {
         const inter = interpolate(a, b)
-        const raw = { ...a.raw }
         return (t) => {
           const res = inter(t)
           if (res) {
-            res.raw = raw
+            // 使用更接近目标点的 raw 数据
+            res.raw = t > 0.5 ? { ...b.raw } : { ...a.raw }
           }
           return res
         }

@@ -9,21 +9,25 @@ import { colors } from '../../src/main'
 
 const colorMap = new Map([
   ['OpenAI', 0x74A89B],
-  ['谷歌', 0x4A90E2],
+  ['Google', 0xFE514D],
   ['Anthropic', 0xD27556],
   ['Meta', 0x005FD5],
   ['微软', 0x00A1F1],
   ['阿里巴巴', 0xFF6C00],
+  ['Alibaba', 0xFF6C00],
   ['Mistral AI', 0xFF7000],
   ['亚马逊', 0xFF9900],
   ['Databricks', 0xFF3621],
   ['深度求索', 0x4169E1],
+  ['DeepSeek', 0x4169E1],
   ['腾讯', 0x168EFF],
   ['MiniMax AI', 0xB165FF],
   ['零一万物', 0x184B39],
   ['艾伦人工智能研究所（AI2）', 0x234F1E],
   ['AI2', 0x234F1E],
   ['英伟达', 0x76B900],
+  ['Nvidia', 0x76B900],
+  ['NVIDIA', 0x76B900],
   ['IBM', 0x2475B2],
   ['技术创新研究院（TII）', 0x7744FF],
   ['Perplexity AI', 0xAD2EFF],
@@ -54,7 +58,62 @@ const colorMap = new Map([
   ['LMSys', 0x4D76A5],
   ['OpenChat', 0xA6B115],
   ['xAI', 0x6B4F7F],
-  ['智谱AI', 0x1E88E5],
+  ['智谱AI', 0x6B4F7F],
+  ['Zhipu AI', 0x497A9A],
+  ['Moonshot', 0x3263DD],
+  ['Tencent', 0x4169E1],
+])
+
+const companyNameMap = new Map([
+  ['OpenAI', 'OpenAI'],
+  ['Moonshot', '月之暗面'],
+  ['NVIDIA', '英伟达'],
+  ['Google', 'Google'],
+  ['Anthropic', 'Anthropic'],
+  ['Meta', 'Meta'],
+  ['Microsoft', '微软'],
+  ['Alibaba', '阿里巴巴'],
+  ['Mistral AI', 'Mistral AI'],
+  ['Amazon', '亚马逊'],
+  ['Databricks', 'Databricks'],
+  ['DeepSeek', '深度求索'],
+  ['Tencent', '腾讯'],
+  ['MiniMax AI', 'MiniMax AI'],
+  ['01.AI', '零一万物'],
+  ['AI2', 'AI2'],
+  ['IBM', 'IBM'],
+  ['TII', 'TII'],
+  ['Perplexity AI', 'Perplexity AI'],
+  ['Cohere', 'Cohere'],
+  ['Snowflake', 'Snowflake'],
+  ['Upstage AI', 'Upstage AI'],
+  ['HuggingFace', 'HuggingFace'],
+  ['Nous Research', 'Nous Research'],
+  ['Teknium', 'Teknium'],
+  ['LMSYS', 'LMSYS'],
+  ['Community', '社区'],
+  ['Tatsu Lab', 'Tatsu Lab'],
+  ['BAIR', 'BAIR'],
+  ['Nexusflow', 'Nexusflow'],
+  ['Shanghai AI Lab', '上海人工智能实验室'],
+  ['RWKV Community', 'RWKV 社区'],
+  ['Stanford', '斯坦福大学'],
+  ['LAION', 'LAION / OpenAssistant'],
+  ['Reka AI', 'Reka AI'],
+  ['Magistral AI', 'Magistral AI'],
+  ['Step AI', 'Step AI / 社区'],
+  ['SmolLM', 'SmolLM 项目 / 社区'],
+  ['Eric Hartford', 'Eric Hartford / 社区'],
+  ['AI21 Labs', 'AI21 Labs'],
+  ['LMSys', 'LMSys'],
+  ['OpenChat', 'OpenChat'],
+  ['xAI', 'xAI'],
+  ['Zhipu AI', '智谱AI'],
+  ['Moonshot', '月之暗面'],
+])
+
+const modelNameMap = new Map([
+
 ])
 
 const config = new Config({
@@ -82,7 +141,9 @@ const config = new Config({
     return colorStr ? Number.parseInt(colorStr.slice(1), 16) : 0x000000
   },
   getBarInfo: (d) => {
-    return `${d.raw?.model || d.model || 'Unknown Model'} - ${d.id}`
+    const modelName = modelNameMap.get(d.raw?.model || d.model) || d.raw?.model || d.model || 'Unknown Model'
+    const companyName = companyNameMap.get(d.id) || d.id
+    return `${modelName} - ${companyName}`
   },
 })
 const app = new Application()
