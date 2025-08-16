@@ -288,8 +288,8 @@ class TopInfo extends Container {
 }
 
 export function GoComposition() {
-  const bar = useRef<BarChart>()
-  const topInfo = useRef<TopInfo>()
+  const bar = useRef<BarChart | undefined>(undefined)
+  const topInfo = useRef<TopInfo | undefined>(undefined)
   const { width, height, fps, durationInFrames } = useVideoConfig()
   const [handle] = useState(() => delayRender())
   useEffect(() => {

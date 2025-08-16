@@ -246,8 +246,9 @@ export class BarChart extends Container {
       this.stepLabel.anchor.set(1, 1)
       // 设置 step label 的位置
       this.stepLabel.position.set(config.width, config.height)
-      // 从第一个数据中获取 step
-      this.stepLabel.text = config.getStepLabel(data[0].step)
+      // 获取所有数据中最大的 step 值
+      const maxStep = Math.max(...this.data[idx].map(d => d.step))
+      this.stepLabel.text = config.getStepLabel(maxStep)
     }
     else {
       this.stepLabel.renderable = false
