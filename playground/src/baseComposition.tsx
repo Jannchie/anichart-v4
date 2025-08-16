@@ -17,6 +17,7 @@ const colorMap = new Map([
   ['Alibaba', 0xFF6C00],
   ['Mistral AI', 0xFF7000],
   ['亚马逊', 0xFF9900],
+  ['Amazon', 0xFF9900],
   ['Databricks', 0xFF3621],
   ['深度求索', 0x4169E1],
   ['DeepSeek', 0x4169E1],
@@ -133,6 +134,7 @@ const config = new Config({
   transitionDurationSec: 2,
   labelField: '-',
   topN: 16,
+  totalDurationSec: 120,
   getColor: (d) => {
     if (colorMap.has(d.id)) {
       return colorMap.get(d.id)

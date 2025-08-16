@@ -11,17 +11,17 @@
     "test": "eslint src --ext ts,tsx,js,jsx && tsc"
   },
   "dependencies": {
-    "@remotion/cli": "4.0.255",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "remotion": "4.0.257"
+    "@remotion/cli": "4.0.334",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "remotion": "4.0.334"
   },
   "devDependencies": {
-    "@remotion/eslint-config": "4.0.251",
-    "@types/react": "^19.0.8",
-    "@types/web": "^0.0.200",
-    "eslint": "^9.19.0",
-    "prettier": "^3.4.2",
-    "typescript": "^5.7.3"
+    "@remotion/eslint-config": "4.0.334",
+    "@types/react": "^19.1.10",
+    "@types/web": "^0.0.262",
+    "eslint": "^9.33.0",
+    "prettier": "^3.6.2",
+    "typescript": "^5.9.2"
   }
 }
