@@ -1,11 +1,11 @@
-import { Application, Assets, BitmapText, Container, Sprite, Text } from 'pixi.js'
+import type { Data } from '../../src/Data'
 import dayjs from 'dayjs'
+import { Application, Assets, BitmapText, Container, Sprite, Text } from 'pixi.js'
 import { useEffect, useRef, useState } from 'react'
 import { continueRender, delayRender, staticFile, useCurrentFrame, useVideoConfig } from 'remotion'
+import { BarChart } from '../../src/BarChart'
 import { Config } from '../../src/Config'
 import { DataProcessor } from '../../src/DataProcessor'
-import { BarChart } from '../../src/BarChart'
-import type { Data } from '../../src/Data'
 import { imageMap, textureMap } from '../../src/main'
 
 function loadImageMap() {
@@ -251,7 +251,7 @@ class TopInfo extends Container {
     const currentID = topData.id
     let j = i
     while (j >= 0 && topIDList[j] === currentID) {
-	    j--
+      j--
     }
     const prevStep = j < 0 ? this.data[0][0].step : this.data[j][0].step
 
@@ -294,10 +294,10 @@ export function GoComposition() {
   const [handle] = useState(() => delayRender())
   useEffect(() => {
     init({
-	  fps,
-	  width,
-	  height,
-	  durationInFrames,
+      fps,
+      width,
+      height,
+      durationInFrames,
     }).then((res) => {
       bar.current = res[0] as BarChart
       topInfo.current = res[1] as TopInfo

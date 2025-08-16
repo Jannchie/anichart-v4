@@ -7,12 +7,11 @@
 
 import { Config } from '@remotion/cli/config'
 
-// Config.setVideoImageFormat('jpeg')
 Config.setOverwriteOutput(true)
-Config.setCodec('h264')
-Config.setCrf(2)
-Config.setConcurrency(8)
 Config.setMuted(true)
-Config.setChromiumOpenGlRenderer('angle')
-// Config.setFrameRange([0, 200])
-// Config.setLevel('verbose')
+Config.setCodec('h264')
+Config.setVideoBitrate('24M')
+Config.setImageFormat('png')
+Config.setConcurrency(8)
+Config.setGl('angle')
+Config.setScale(1)

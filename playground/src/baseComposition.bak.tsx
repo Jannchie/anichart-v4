@@ -65,6 +65,54 @@ const colorMap = new Map([
   ['Tencent', 0x4169E1],
 ])
 
+const companyNameMap = new Map([
+  ['OpenAI', 'OpenAI'],
+  ['Moonshot', '月之暗面'],
+  ['NVIDIA', '英伟达'],
+  ['Google', 'Google'],
+  ['Anthropic', 'Anthropic'],
+  ['Meta', 'Meta'],
+  ['Microsoft', '微软'],
+  ['Alibaba', '阿里巴巴'],
+  ['Mistral AI', 'Mistral AI'],
+  ['Amazon', '亚马逊'],
+  ['Databricks', 'Databricks'],
+  ['DeepSeek', '深度求索'],
+  ['Tencent', '腾讯'],
+  ['MiniMax AI', 'MiniMax AI'],
+  ['01.AI', '零一万物'],
+  ['AI2', 'AI2'],
+  ['IBM', 'IBM'],
+  ['TII', 'TII'],
+  ['Perplexity AI', 'Perplexity AI'],
+  ['Cohere', 'Cohere'],
+  ['Snowflake', 'Snowflake'],
+  ['Upstage AI', 'Upstage AI'],
+  ['HuggingFace', 'HuggingFace'],
+  ['Nous Research', 'Nous Research'],
+  ['Teknium', 'Teknium'],
+  ['LMSYS', 'LMSYS'],
+  ['Community', '社区'],
+  ['Tatsu Lab', 'Tatsu Lab'],
+  ['BAIR', 'BAIR'],
+  ['Nexusflow', 'Nexusflow'],
+  ['Shanghai AI Lab', '上海人工智能实验室'],
+  ['RWKV Community', 'RWKV 社区'],
+  ['Stanford', '斯坦福大学'],
+  ['LAION', 'LAION / OpenAssistant'],
+  ['Reka AI', 'Reka AI'],
+  ['Magistral AI', 'Magistral AI'],
+  ['Step AI', 'Step AI / 社区'],
+  ['SmolLM', 'SmolLM 项目 / 社区'],
+  ['Eric Hartford', 'Eric Hartford / 社区'],
+  ['AI21 Labs', 'AI21 Labs'],
+  ['LMSys', 'LMSys'],
+  ['OpenChat', 'OpenChat'],
+  ['xAI', 'xAI'],
+  ['Zhipu AI', '智谱AI'],
+  ['Moonshot', '月之暗面'],
+])
+
 const modelNameMap = new Map([
 
 ])
@@ -73,7 +121,7 @@ const config = new Config({
   idField: 'company',
   stepField: 'date',
   valueField: 'rating',
-  xAxisLabel: 'LMSYS Chatbot Arena Elo Rating',
+  xAxisLabel: 'LMSYS 聊天机器人竞技场 Elo 评分',
   maxRetentionTimeSec: 5,
   getStepLabel(step) {
     const date = new Date(step * 1000)
@@ -96,7 +144,8 @@ const config = new Config({
   },
   getBarInfo: (d) => {
     const modelName = modelNameMap.get(d.raw?.model || d.model) || d.raw?.model || d.model || 'Unknown Model'
-    return `${modelName} - ${d.id}`
+    const companyName = companyNameMap.get(d.id) || d.id
+    return `${modelName} - ${companyName}`
   },
 })
 const app = new Application()
