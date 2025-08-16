@@ -220,12 +220,14 @@ export class BarChart extends Container {
     for (let i = 0; i < data.length; i++) {
       const d = data[i]
       const bar = this.barComponentMap.get(d.id)!
+      
       if (d.up) {
         bar.zIndex = 2
       }
       else {
         bar.zIndex = 1
       }
+      
       bar.update({
         y: d.blurRank * (config.barHeight + config.barGap),
         label: d.label,

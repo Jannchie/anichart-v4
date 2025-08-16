@@ -84,6 +84,12 @@ export class BarComponent extends Container {
         fontFamily: settings.fontFamily,
         fontSize: settings.fontSize! - 12, // TODO: a magic number
         fill: settings.colorBarInfo,
+        dropShadow: {
+          color: 0x000000,
+          alpha: 0.5,
+          blur: 2,
+          distance: 4,
+        },
       },
     })
 
@@ -92,6 +98,12 @@ export class BarComponent extends Container {
         fontFamily: settings.fontFamily,
         fontSize: settings.fontSize! - 12, // TODO: a magic number
         fill: settings.colorLabel,
+        dropShadow: {
+          color: 0x000000,
+          alpha: 0.5,
+          blur: 2,
+          distance: 4,
+        },
       },
     })
     this.extraValueLabel = new BitmapText({

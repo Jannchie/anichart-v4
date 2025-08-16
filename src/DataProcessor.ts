@@ -90,9 +90,22 @@ export class DataProcessor {
           d.alpha = 1 - (d.blurRank - config.topN + 1)
         }
         // 还需要检查是否是上升还是下降。
-        // 检查方式为，如果 i > 0，且 blurRanks[i] < blurRanks[i - 1]，则是上升，否则是下降
+        // 只有当当前blurRank接近整数时才更新up状态，避免移动过程中的层叠跳跃
         if (i > 0) {
-          d.up = blurRanks[i] < blurRanks[i - 1]
+          const currentRank = blurRanks[i]
+          const prevRank = blurRanks[i - 1]
+
+          // 检查当前rank是否接近整数（允许小范围误差）
+          const isNearInteger = Math.abs(currentRank - Math.round(currentRank)) < 0.001
+
+          if (isNearInteger) {
+            // 只在接近整数位置时更新up状态
+            d.up = currentRank < prevRank
+          }
+          else {
+            // 移动过程中保持前一帧的up状态
+            d.up = group[i - 1]?.up ?? false
+          }
         }
       })
     })
