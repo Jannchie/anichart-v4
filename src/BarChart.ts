@@ -37,11 +37,11 @@ export class BarChart extends Container {
     super()
     this.config = config
     this.data = data
-    const idList = Array.from(new InternSet(data.flat().map(d => d.id)))
-    const labelList = Array.from(new InternSet(data.flat().map(d => d.label)))
-    const idImageMap = new Map(Array.from(new InternSet(data.flat().map((d) => {
+    const idList = [...new InternSet(data.flat().map(d => d.id))]
+    const labelList = [...new InternSet(data.flat().map(d => d.label))]
+    const idImageMap = new Map(new InternSet(data.flat().map((d) => {
       return [d.id, textureMap.get(d.raw[config.imageField])]
-    }))))
+    })))
     this.xAxis = new Container()
     this.xAxisTickContainer = new Container()
     // 计算 ticks 对象
@@ -54,18 +54,22 @@ export class BarChart extends Container {
       text: config.xAxisLabel,
       style: {
         fontSize: 32,
-        fill: 0xAAAAAA,
+        fill: 0xAA_AA_AA,
         fontFamily: config.fontFamily,
       },
     })
 
-    data.forEach((d, i) => {
+    for (const [i, d] of data.entries()) {
       const [min, max] = extent(d, config.getValue)
       const scale = getValueScale(config.valueScaleType, min, max)
       const ticks = scale.ticks(config.tickNum)
 
-      ticks.forEach((tick) => {
-        if (!tickSet.has(tick)) {
+      for (const tick of ticks) {
+        if (tickSet.has(tick)) {
+          const numberList = ticksAlphaMap.get(tick)!
+          numberList[i] = 1
+        }
+        else {
           tickSet.add(tick)
           const numberList: number[] = []
           numberList.length = data.length
@@ -76,7 +80,7 @@ export class BarChart extends Container {
             text: tick.toString(),
             style: {
               fontSize: 24,
-              fill: 0xAAAAAA,
+              fill: 0xAA_AA_AA,
               fontFamily: config.fontFamily,
             },
           })
@@ -90,7 +94,7 @@ export class BarChart extends Container {
           })
           tickLine.setStrokeStyle({
             width: 1,
-            color: 0x333333,
+            color: 0x33_33_33,
           })
 
           const tickBounds = tickText.getBounds()
@@ -106,12 +110,8 @@ export class BarChart extends Container {
           ticksComponentMap.set(tick, tickComp)
           this.xAxisTickContainer.addChild(tickComp)
         }
-        else {
-          const numberList = ticksAlphaMap.get(tick)!
-          numberList[i] = 1
-        }
-      })
-    })
+      }
+    }
 
     // center xAxis
     this.xAxisLabel.anchor.set(0.5, 0)
@@ -133,7 +133,7 @@ export class BarChart extends Container {
         height: config.barHeight,
         label: labelList[i],
         fontSize: config.barHeight,
-        colorLabel: 0xFFFFFF,
+        colorLabel: 0xFF_FF_FF,
         leftLabelPadding: config.leftLabelPadding,
         barInfoPadding: config.barInfoPadding,
         barInfoStyle: config.barInfoStyle,
@@ -143,18 +143,19 @@ export class BarChart extends Container {
     }))
     const maxLabelWidth = this.getMaxLabelWidth(barComponentMap)
     // 设置最大的 label 宽度
-    barComponentMap.forEach((v) => {
+    for (const v of barComponentMap.values()) {
       v.settings.leftLabelWidth = maxLabelWidth
-    })
+    }
     // 计算最大的 valueLabel 宽度
-    const maxValueLabelWidth = data.flat().reduce((max, d) => {
+    let maxValueLabelWidth = 0
+    for (const d of data.flat()) {
       const comp = barComponentMap.get(d.id)!
       comp.update({
         valueLabel: config.getValueLabel(d),
         extraValueLabel: config.getValueExtra(d),
       })
-      return Math.max(max, comp.valueContainer.width)
-    }, 0)
+      maxValueLabelWidth = Math.max(maxValueLabelWidth, comp.valueContainer.width)
+    }
 
     // 最大柱子宽度 = 设置宽度 - 最大 left label 宽度 - 最大 value label 宽度 - left label padding - value label padding - padding
     const maxBarWidth = config.width - maxLabelWidth - maxValueLabelWidth - config.leftLabelPadding - config.valueLabelPadding
@@ -162,17 +163,17 @@ export class BarChart extends Container {
 
     const swapFrames = config.swapDurationSec * config.fps
     // 对 ticksAlpha 的每一个 value 执行 blur
-    ticksAlphaMap.forEach((alphaList, tick) => {
+    for (const [tick, alphaList] of ticksAlphaMap.entries()) {
       const blurAlphaList = blur(alphaList, swapFrames / 6) as number[]
       ticksAlphaMap.set(tick, blurAlphaList)
-    })
+    }
     this.ticksComponentMap = ticksComponentMap
     this.ticksAlphaMap = ticksAlphaMap
 
     const stepLabel = new Text({
       style: {
         fontSize: 48,
-        fill: 16777215,
+        fill: 16_777_215,
         // fontWeight: 'bold',
         fontFamily: config.fontFamily,
       },
@@ -181,7 +182,7 @@ export class BarChart extends Container {
     this.stepLabel = stepLabel
     this.position.set(config.x, config.y)
     this.barMain = new Container()
-    this.barMain.addChild(...Array.from(barComponentMap.values()))
+    this.barMain.addChild(...barComponentMap.values())
     this.addChild(this.xAxis)
     this.addChild(stepLabel)
     this.addChild(this.barMain)
@@ -193,9 +194,9 @@ export class BarChart extends Container {
   private getMaxLabelWidth(barComponentMap: Map<string, BarComponent>) {
     let maxLabelWidth = 0
     // 计算最大的 label 宽度
-    barComponentMap.forEach((v) => {
+    for (const v of barComponentMap.values()) {
       maxLabelWidth = Math.max(maxLabelWidth, v.leftLabel.width)
-    })
+    }
     return maxLabelWidth
   }
 
@@ -210,24 +211,18 @@ export class BarChart extends Container {
     }
     const [min, max] = extent(data, d => d.value)
     const valueScale = getValueScale(config.valueScaleType, min, max, config.valueScaleDelta)
-    this.ticksAlphaMap.forEach((alphaList, tick) => {
+    for (const [tick, alphaList] of this.ticksAlphaMap.entries()) {
       const tickComp = this.ticksComponentMap.get(tick)!
       tickComp.alpha = alphaList[idx]
       const width = tickComp.children[0].getBounds().width
       tickComp.position.set(valueScale(tick) * this.maxBarWidth - width / 2, 0)
-    })
+    }
     const barIdSet = new InternSet(data.map(d => d.id))
-    for (let i = 0; i < data.length; i++) {
-      const d = data[i]
+    for (const [i, d] of data.entries()) {
       const bar = this.barComponentMap.get(d.id)!
-      
-      if (d.up) {
-        bar.zIndex = 2
-      }
-      else {
-        bar.zIndex = 1
-      }
-      
+
+      bar.zIndex = d.up ? 2 : 1
+
       bar.update({
         y: d.blurRank * (config.barHeight + config.barGap),
         label: d.label,
@@ -239,11 +234,11 @@ export class BarChart extends Container {
         barInfo: config.getBarInfo(d, i, idx),
       })
     }
-    this.barComponentMap.forEach((bar, id) => {
+    for (const [id, bar] of this.barComponentMap.entries()) {
       if (!barIdSet.has(id)) {
         bar.update({ alpha: 0 })
       }
-    })
+    }
     if (this.config.showStepLabel) {
       this.stepLabel.anchor.set(1, 1)
       // 设置 step label 的位置

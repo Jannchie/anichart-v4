@@ -90,14 +90,14 @@ async function init({
     width: config.canvasWidth,
     height: config.canvasHeight,
     backgroundColor: config.backgroundColor,
-    textureGCCheckCountMax: 99999999999999,
+    textureGCCheckCountMax: 99_999_999_999_999,
     roundPixels: true,
     antialias: true,
   })
 
   // eslint-disable-next-line no-console
   console.log('[ANI] initializing')
-  document.getElementById('canvas-el')?.replaceWith(app.canvas)
+  document.querySelector('#canvas-el')?.replaceWith(app.canvas)
 
   for (const key of imageMap.keys()) {
     const url = imageMap.get(key)!
@@ -109,7 +109,7 @@ async function init({
       setTimeout(() => {
         reject(new Error(`load image ${url} timeout`))
       }, 1000)
-      image.onload = resolve
+      image.addEventListener('load', resolve)
     })
     const minH = 50
     const h = Math.max(minH, image.height)
@@ -166,7 +166,7 @@ class TopInfo extends Container {
       style: {
         fontSize: lineHeight,
         fontFamily: config.fontFamily,
-        fill: 0xAAAAAA,
+        fill: 0xAA_AA_AA,
       },
     })
 
@@ -174,7 +174,7 @@ class TopInfo extends Container {
       style: {
         fontSize: lineHeight,
         fontFamily: config.fontFamily,
-        fill: 0xAAAAAA,
+        fill: 0xAA_AA_AA,
       },
     })
 
@@ -183,7 +183,7 @@ class TopInfo extends Container {
       style: {
         fontSize: lineHeight,
         fontFamily: config.fontFamily,
-        fill: 0xAAAAAA,
+        fill: 0xAA_AA_AA,
       },
     })
     this.holdTimeText = new BitmapText({
@@ -191,7 +191,7 @@ class TopInfo extends Container {
       style: {
         fontSize: lineHeight,
         fontFamily: config.fontFamily,
-        fill: 0xAAAAAA,
+        fill: 0xAA_AA_AA,
       },
     })
     this.topRightText = new Text({
@@ -199,14 +199,14 @@ class TopInfo extends Container {
       style: {
         fontSize: lineHeight,
         fontFamily: config.fontFamily,
-        fill: 0xAAAAAA,
+        fill: 0xAA_AA_AA,
       },
     })
     this.dateLabel = new BitmapText({
       style: {
         fontSize: 120,
         fontFamily: config.fontFamily,
-        fill: 0xAAAAAA,
+        fill: 0xAA_AA_AA,
       },
     })
     this.flag = Sprite.from(textureMap.get('cn')!)
@@ -257,15 +257,18 @@ class TopInfo extends Container {
 
     this.flag.texture = textureMap.get(topData.raw[this.config.imageField])!
     switch (topData.raw.country) {
-      case 'cn':
+      case 'cn': {
         this.country.text = '中国'
         break
-      case 'jp':
+      }
+      case 'jp': {
         this.country.text = '日本'
         break
-      case 'kr':
+      }
+      case 'kr': {
         this.country.text = '韩国'
         break
+      }
     }
     if (this.topText.text !== topData.id) {
       this.holdTime = 0

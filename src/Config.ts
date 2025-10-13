@@ -50,20 +50,20 @@ interface IConfig {
 
 export class Config {
   imageField: string
-  canvasWidth: number
-  canvasHeight: number
-  backgroundColor: number
+  canvasWidth: number = 1920
+  canvasHeight: number = 1080
+  backgroundColor: number = 0x11_11_11
   barInfoStyle: 'default' | 'reverse'
   fontFamily: string
-  idField: string
+  idField: string = 'id'
   getID: (d: any, i?: number) => any
-  labelField: string
+  labelField: string = 'id'
   getLabel: (d: any, i?: number) => any
-  stepField: string
+  stepField: string = 'step'
   getStep: (d: any, i?: number) => number
-  valueField: string
+  valueField: string = 'value'
   getValue: (d: any, i?: number) => number
-  colorField: string
+  colorField: string = 'id'
   getColor: (d: any, i?: number) => number | undefined
   getValueLabel: (d: any, i?: number) => any
   getBarInfo: (d: any, i?: number, step?: number) => any
@@ -76,7 +76,7 @@ export class Config {
   swapDurationSec: number
   barGap: number
   barHeight: number
-  autoBarHeight: boolean
+  autoBarHeight: boolean = true
   valueScaleType: string
   leftLabelPadding: number
   valueLabelPadding: number
@@ -93,15 +93,6 @@ export class Config {
   xAxisLabel: string
   barInfoPadding: number
   constructor(config: Partial<IConfig> = {}) {
-    this.canvasWidth = 1920
-    this.canvasHeight = 1080
-    this.idField = 'id'
-    this.labelField = 'id'
-    this.stepField = 'step'
-    this.valueField = 'value'
-    this.colorField = 'id'
-    this.backgroundColor = 0x111111
-    this.autoBarHeight = true
     this.getID = (d: any) => d[this.idField]
     this.getLabel = (d: any) => d[this.labelField]
     this.getStep = (d: any) => {
@@ -123,7 +114,7 @@ export class Config {
       if (color) {
         return Number.parseInt(color.slice(1), 16)
       }
-      return 1677721
+      return 1_677_721
     }
     this.getValueLabel = (d: Data) => {
       return d.value.toFixed(0)

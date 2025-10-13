@@ -50,11 +50,11 @@ export class BarComponent extends Container {
       height: 48,
       label: 'Label',
       barInfo: '',
-      color: 0x151515,
+      color: 0x15_15_15,
       fontFamily: 'Sarasa Mono SC',
       fontSize: 20,
-      colorLabel: 0xFFFFFF,
-      colorBarInfo: 0xFFFFFF,
+      colorLabel: 0xFF_FF_FF,
+      colorBarInfo: 0xFF_FF_FF,
       leftLabelPadding: 5,
       barInfoPadding: 10,
       valueLabelPadding: 5,
@@ -85,7 +85,7 @@ export class BarComponent extends Container {
         fontSize: settings.fontSize! - 12, // TODO: a magic number
         fill: settings.colorBarInfo,
         dropShadow: {
-          color: 0x000000,
+          color: 0x00_00_00,
           alpha: 0.5,
           blur: 2,
           distance: 4,
@@ -99,7 +99,7 @@ export class BarComponent extends Container {
         fontSize: settings.fontSize! - 12, // TODO: a magic number
         fill: settings.colorLabel,
         dropShadow: {
-          color: 0x000000,
+          color: 0x00_00_00,
           alpha: 0.5,
           blur: 2,
           distance: 4,
@@ -109,7 +109,7 @@ export class BarComponent extends Container {
     this.extraValueLabel = new BitmapText({
       style: {
         fontSize: 32,
-        fill: 0xAAAAAA,
+        fill: 0xAA_AA_AA,
         fontFamily: settings.fontFamily,
       },
     })
@@ -148,14 +148,16 @@ export class BarComponent extends Container {
       const aspectRatio = image.width / image.height
       const scale = 0.7
       switch (this.settings.barInfoStyle) {
-        case 'default':
+        case 'default': {
           image.height = this.settings.height
           image.width = this.settings.height * aspectRatio
           break
-        case 'reverse':
+        }
+        case 'reverse': {
           // TODO: 0.8 is a magic scale number
           image.height = this.settings.height * scale
           image.width = this.settings.height * aspectRatio * scale
+        }
       }
       barInfoContainer.position.set(width - barInfoText.width - image.width - barInfoPadding, 0)
     }
@@ -163,17 +165,19 @@ export class BarComponent extends Container {
       barInfoContainer.position.set(width - barInfoText.width - barInfoPadding, 0)
     }
     switch (this.settings.barInfoStyle) {
-      case 'default':
+      case 'default': {
         barInfoText.position.set(0, height / 2 - barInfoText.height / 2)
         if (image) {
           image.position.set(barInfoText.width + barInfoPadding, 0)
         }
         break
-      case 'reverse':
+      }
+      case 'reverse': {
         barInfoText.position.set((image?.width ?? 0) + barInfoPadding, height / 2 - barInfoText.height / 2)
         if (image) {
           image.position.set(0, height / 2 - image.height / 2)
         }
+      }
     }
 
     let leftLabelWidth = this.settings.leftLabelWidth

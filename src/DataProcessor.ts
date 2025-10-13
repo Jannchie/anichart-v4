@@ -11,7 +11,7 @@ export class DataProcessor {
     const data = DataProcessor.preprocess(rawData, config)
     console.timeEnd('process')
     // group by time
-    const rawStepList = Array.from(new InternSet(data.map(d => d.step)))
+    const rawStepList = [...new InternSet(data.map(d => d.step))]
     const idGroups = group(data, d => d.id)
     const [startStep, endStep] = extent(rawStepList)
     if (typeof startStep !== 'number' || typeof endStep !== 'number') {
@@ -41,13 +41,13 @@ export class DataProcessor {
   private static fillRank(stepList: number[], scaleMap: Map<string, ScaleLinear<unknown, unknown, unknown>>, config: Config) {
     return stepList.map((step) => {
       const list: any[] = []
-      scaleMap.forEach((scale) => {
+      for (const scale of scaleMap.values()) {
         const scaledData = scale(step)
         if (scaledData) {
           const d = Object.assign({}, scaledData)
           list.push(d)
         }
-      })
+      }
       // 根据 value 排序
       list.sort((a, b) => {
         // 如果是 NaN 则排在最后
@@ -73,16 +73,16 @@ export class DataProcessor {
     // 最后需要留出一次交换的时间，将最后一帧的数据复制 swapFrames 次
     for (let i = 0; i < swapFrames; i++) {
       // 为了避免引用问题，需要深拷贝
-      result.push(result[result.length - 1].map((d: any) => Object.assign({}, d)))
+      result.push(result.at(-1).map((d: any) => Object.assign({}, d)))
     }
     const groupIDResult = group(result.flat(), d => d.id)
-    groupIDResult.forEach((group) => {
+    for (const group of groupIDResult) {
       group.sort((a, b) => a.step - b.step)
       const ranks = group.map(d => d.rank)
       const swapFrames = config.swapDurationSec * config.fps
       const blurRanks = blur(ranks, swapFrames / 6)
 
-      group.forEach((d, i) => {
+      for (const [i, d] of group.entries()) {
         d.blurRank = blurRanks[i]
         // 如果 blur rank 在 TopN - 1 ~ TopN 之间，则需要调整 alpha
         // 如果 TopN 是 20，那么 blurRank 在 19 ~ 20 之间的 alpha 为 1 ~ 0，越靠近 20，alpha 越小
@@ -98,17 +98,12 @@ export class DataProcessor {
           // 检查当前rank是否接近整数（允许小范围误差）
           const isNearInteger = Math.abs(currentRank - Math.round(currentRank)) < 0.001
 
-          if (isNearInteger) {
-            // 只在接近整数位置时更新up状态
-            d.up = currentRank < prevRank
-          }
-          else {
-            // 移动过程中保持前一帧的up状态
-            d.up = group[i - 1]?.up ?? false
-          }
+          d.up = isNearInteger
+            ? currentRank < prevRank // 只在接近整数位置时更新up状态
+            : group[i - 1]?.up ?? false // 移动过程中保持前一帧的up状态
         }
-      })
-    })
+      }
+    }
   }
 
   private static preprocess(rawData: DSVRowArray<string>, config: Config) {
@@ -124,11 +119,9 @@ export class DataProcessor {
       }
       for (const key in d) {
         // 值不能是 ID
-        if (d[key] !== result.id) {
-          // 如果值能被转换成数字，则转换成数字，加入到对象中
-          if (!Number.isNaN(Number(d[key]))) {
-            result[key] = Number(d[key]) as any
-          }
+        if (d[key] !== result.id // 如果值能被转换成数字，则转换成数字，加入到对象中
+          && !Number.isNaN(Number(d[key]))) {
+          result[key] = Number(d[key]) as any
         }
       }
       return result
@@ -137,10 +130,10 @@ export class DataProcessor {
     const stepGroup = group(temp, d => Math.floor(d.step))
     const idSet = new InternSet<string>()
     // 获取进入了 TopN 的 id
-    stepGroup.forEach((group) => {
+    for (const group of stepGroup.values()) {
       group.sort((a, b) => b.value - a.value)
-      group.slice(0, topN + 1).forEach(d => idSet.add(d.id)) // 多留一位
-    })
+      for (const d of group.slice(0, topN + 1)) idSet.add(d.id) // 多留一位
+    }
     const idGroups = group(temp, d => d.id)
     const data = [...idGroups.values()].filter(group => idSet.has(group[0].id)).flat()
     return data
@@ -148,9 +141,9 @@ export class DataProcessor {
 
   private static getScaleMap(idGroups: InternMap<string, Data[]>, endStep: number, stepSec: number, config: Config, startStep: number) {
     const scaleMap = new Map<string, ReturnType<typeof scaleLinear>>()
-    idGroups.forEach((group, key) => {
+    for (let [key, group] of idGroups.entries()) {
       group = group.sort((a, b) => a.step - b.step)
-      const last = group[group.length - 1]
+      const last = group.at(-1)
       if ((endStep - last.step) * stepSec > config.maxRetentionTimeSec * 1000) {
         // 如果，最后一个时间戳距离结束时间超过了最大暂留时间，则需要插入 NaN
         // 在插入 NaN 之前，需要先插入一个时间戳，这个时间戳用于进入退出动画。
@@ -162,8 +155,7 @@ export class DataProcessor {
           alpha: 0,
           up: false,
           raw: last.raw,
-        })
-        group.push({
+        }, {
           id: last.id,
           label: last.label,
           value: Number.NaN,
@@ -270,7 +262,7 @@ export class DataProcessor {
         }
       })
       scaleMap.set(key, scale)
-    })
+    }
     return scaleMap
   }
 }
