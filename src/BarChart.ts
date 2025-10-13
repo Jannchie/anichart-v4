@@ -1,8 +1,8 @@
 import type { Config } from './Config'
 import type { Data } from './Data'
 import { blur, extent, InternSet, scaleLinear } from 'd3'
-import { Container, Graphics, Sprite, Text } from 'pixi.js'
-import { BarComponent } from './bar'
+import { CanvasTextMetrics, Container, Graphics, Sprite, Text, TextStyle } from 'pixi.js'
+import { BarComponent, EXTRA_VALUE_LABEL_PADDING } from './bar'
 import { textureMap } from './main'
 
 function getValueScale(type: string, min?: number, max?: number, delta: number = 1000) {
@@ -38,7 +38,6 @@ export class BarChart extends Container {
     this.config = config
     this.data = data
     const idList = [...new InternSet(data.flat().map(d => d.id))]
-    const labelList = [...new InternSet(data.flat().map(d => d.label))]
     const idImageMap = new Map(new InternSet(data.flat().map((d) => {
       return [d.id, textureMap.get(d.raw[config.imageField])]
     })))
@@ -123,7 +122,15 @@ export class BarChart extends Container {
     if (config.autoBarHeight) {
       config.barHeight = ((config.height - this.tickLabelHeight - this.xAxisLabelPadding - this.xAxisLabel.height) / config.topN) - config.barGap
     }
-    const barComponentMap = new Map<string, BarComponent>(idList.map((id, i) => {
+    const labelMap = new Map<string, string>()
+    for (const item of data.flat()) {
+      if (!labelMap.has(item.id)) {
+        labelMap.set(item.id, item.label)
+      }
+    }
+    const maxLabelWidth = this.getMaxLabelWidth([...labelMap.values()], config)
+
+    const barComponentMap = new Map<string, BarComponent>(idList.map((id) => {
       const imageTexture = idImageMap.get(id)
       const imgSprite = imageTexture ? Sprite.from(imageTexture) : undefined
       const comp = new BarComponent({
@@ -131,31 +138,22 @@ export class BarChart extends Container {
         y: 0,
         width: 0,
         height: config.barHeight,
-        label: labelList[i],
+        label: labelMap.get(id) ?? '',
         fontSize: config.barHeight,
         colorLabel: 0xFF_FF_FF,
         leftLabelPadding: config.leftLabelPadding,
         barInfoPadding: config.barInfoPadding,
         barInfoStyle: config.barInfoStyle,
         image: imgSprite,
+        leftLabelWidth: maxLabelWidth,
       })
       return [id, comp]
     }))
-    const maxLabelWidth = this.getMaxLabelWidth(barComponentMap)
     // 设置最大的 label 宽度
     for (const v of barComponentMap.values()) {
       v.settings.leftLabelWidth = maxLabelWidth
     }
-    // 计算最大的 valueLabel 宽度
-    let maxValueLabelWidth = 0
-    for (const d of data.flat()) {
-      const comp = barComponentMap.get(d.id)!
-      comp.update({
-        valueLabel: config.getValueLabel(d),
-        extraValueLabel: config.getValueExtra(d),
-      })
-      maxValueLabelWidth = Math.max(maxValueLabelWidth, comp.valueContainer.width)
-    }
+    const maxValueLabelWidth = this.getMaxValueLabelWidth(data, config)
 
     // 最大柱子宽度 = 设置宽度 - 最大 left label 宽度 - 最大 value label 宽度 - left label padding - value label padding - padding
     const maxBarWidth = config.width - maxLabelWidth - maxValueLabelWidth - config.leftLabelPadding - config.valueLabelPadding
@@ -191,13 +189,65 @@ export class BarChart extends Container {
     this.barComponentMap = barComponentMap
   }
 
-  private getMaxLabelWidth(barComponentMap: Map<string, BarComponent>) {
+  private getMaxLabelWidth(labels: string[], config: Config) {
+    if (labels.length === 0) {
+      return 0
+    }
+    const style = new TextStyle({
+      fontFamily: config.fontFamily,
+      fontSize: config.barHeight,
+    })
     let maxLabelWidth = 0
     // 计算最大的 label 宽度
-    for (const v of barComponentMap.values()) {
-      maxLabelWidth = Math.max(maxLabelWidth, v.leftLabel.width)
+    for (const label of labels) {
+      const metrics = CanvasTextMetrics.measureText(label ?? '', style)
+      maxLabelWidth = Math.max(maxLabelWidth, metrics.width)
     }
     return maxLabelWidth
+  }
+
+  private getMaxValueLabelWidth(data: Data[][], config: Config) {
+    const flatData = data.flat()
+    if (flatData.length === 0) {
+      return 0
+    }
+    const valueStyle = new TextStyle({
+      fontFamily: config.fontFamily,
+      fontSize: Math.max(config.barHeight - 12, 1),
+    })
+    const extraStyle = new TextStyle({
+      fontFamily: config.fontFamily,
+      fontSize: 32,
+    })
+    let maxWidth = 0
+    const basePadding = config.valueLabelPadding ?? 0
+
+    for (const item of flatData) {
+      const valueLabel = config.getValueLabel(item)
+      const extraLabel = config.getValueExtra(item)
+      const valueText = valueLabel === undefined || valueLabel === null ? '' : String(valueLabel)
+      const extraText = extraLabel === undefined || extraLabel === null ? '' : String(extraLabel)
+      const valueWidth = valueText ? this.measureTextWidth(valueText, valueStyle) : 0
+      const extraWidth = extraText ? this.measureTextWidth(extraText, extraStyle) : 0
+
+      let totalWidth = basePadding + valueWidth
+      if (extraWidth > 0) {
+        totalWidth += EXTRA_VALUE_LABEL_PADDING + extraWidth
+      }
+      maxWidth = Math.max(maxWidth, totalWidth)
+    }
+    return maxWidth
+  }
+
+  private measureTextWidth(text: string, style: TextStyle) {
+    try {
+      return CanvasTextMetrics.measureText(text, style).width
+    }
+    catch {
+      const fontSize = typeof style.fontSize === 'number' ? style.fontSize : Number.parseFloat(String(style.fontSize)) || 0
+      const averageCharWidth = fontSize * 0.6
+      return text.length * averageCharWidth
+    }
   }
 
   update(idx: number) {

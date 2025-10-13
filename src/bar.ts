@@ -1,6 +1,8 @@
 import type { Sprite } from 'pixi.js'
 import { BitmapText, Container, Graphics, Text } from 'pixi.js'
 
+export const EXTRA_VALUE_LABEL_PADDING = 20
+
 interface BarItemSettings {
   x: number
   y: number
@@ -231,7 +233,7 @@ export class BarComponent extends Container {
     this.valueLabel.position.set(width + valueLabelPadding, (height - this.valueLabel.height) / 2)
     this.extraValueLabel.text = this.settings.extraValueLabel ?? ''
     // TODO: 20 is a magic padding number
-    this.extraValueLabel.position.set(this.valueLabel.x + this.valueLabel.width + 20, (height - this.extraValueLabel.height) / 2)
+    this.extraValueLabel.position.set(this.valueLabel.x + this.valueLabel.width + EXTRA_VALUE_LABEL_PADDING, (height - this.extraValueLabel.height) / 2)
     this.position.set(x, y)
     this.alpha = this.settings.alpha
   }
