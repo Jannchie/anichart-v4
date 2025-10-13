@@ -9,15 +9,15 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@jannchie/eslint-config": "^3.4.3",
-    "dayjs": "^1.11.13",
-    "eslint": "^9.19.0",
-    "pixi.js": "^8.7.3"
+    "@jannchie/eslint-config": "^3.7.1",
+    "dayjs": "^1.11.18",
+    "eslint": "^9.37.0",
+    "pixi.js": "^8.14.0"
   },
   "devDependencies": {
     "@types/d3": "^7.4.3",
     "d3": "^7.9.0",
-    "typescript": "^5.7.3",
-    "vite": "^6.0.11"
+    "typescript": "^5.9.3",
+    "vite": "^7.1.9"
   }
 }

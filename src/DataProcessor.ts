@@ -76,13 +76,13 @@ export class DataProcessor {
       result.push(result.at(-1).map((d: any) => Object.assign({}, d)))
     }
     const groupIDResult = group(result.flat(), d => d.id)
-    for (const group of groupIDResult) {
-      group.sort((a, b) => a.step - b.step)
-      const ranks = group.map(d => d.rank)
+    for (const records of groupIDResult.values()) {
+      records.sort((a, b) => a.step - b.step)
+      const ranks = records.map(d => d.rank)
       const swapFrames = config.swapDurationSec * config.fps
       const blurRanks = blur(ranks, swapFrames / 6)
 
-      for (const [i, d] of group.entries()) {
+      for (const [i, d] of records.entries()) {
         d.blurRank = blurRanks[i]
         // 如果 blur rank 在 TopN - 1 ~ TopN 之间，则需要调整 alpha
         // 如果 TopN 是 20，那么 blurRank 在 19 ~ 20 之间的 alpha 为 1 ~ 0，越靠近 20，alpha 越小
@@ -100,7 +100,7 @@ export class DataProcessor {
 
           d.up = isNearInteger
             ? currentRank < prevRank // 只在接近整数位置时更新up状态
-            : group[i - 1]?.up ?? false // 移动过程中保持前一帧的up状态
+            : records[i - 1]?.up ?? false // 移动过程中保持前一帧的up状态
         }
       }
     }
