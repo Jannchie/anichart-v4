@@ -137,8 +137,6 @@ export class Config {
     this.valueLabelPadding = 5
     this.x = 10
     this.y = 10
-    this.width = this.canvasWidth - 20
-    this.height = this.canvasHeight - 20
     this.showStepLabel = true
     this.imageField = 'id'
     this.barInfoStyle = 'default'
@@ -147,6 +145,14 @@ export class Config {
     this.fontFamily = 'Sarasa Mono SC'
     this.tickNum = 8
     this.xAxisLabel = ''
+    const widthProvided = Object.prototype.hasOwnProperty.call(config, 'width')
+    const heightProvided = Object.prototype.hasOwnProperty.call(config, 'height')
     Object.assign(this, config)
+    if (!widthProvided) {
+      this.width = this.canvasWidth - 20
+    }
+    if (!heightProvided) {
+      this.height = this.canvasHeight - 20
+    }
   }
 }
