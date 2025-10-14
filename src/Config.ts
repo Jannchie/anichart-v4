@@ -6,7 +6,7 @@ interface IConfig {
   canvasWidth: number
   canvasHeight: number
   backgroundColor: number
-  frontFamily: string
+  fontFamily: string
   idField: string
   getID: (d: any, i: number) => any
   labelField: string

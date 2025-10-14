@@ -19,18 +19,32 @@ export class DataProcessor {
     }
     const totalStep = endStep - startStep
     const totalSec = config.totalDurationSec
-    const stepSec = totalSec / totalStep
-    if (config.transitionDurationSec * 2 > config.maxRetentionTimeSec) {
-      config.transitionDurationSec = config.maxRetentionTimeSec / 2
-      console.warn('transitionDurationSec * 2 > maxRetentionTimeSec, set transitionDurationSec to maxRetentionTimeSec / 2')
+    const totalFrame = Math.max(1, Math.round(totalSec * config.fps))
+    const stepSec = totalStep > 0 ? totalSec / totalStep : totalSec
+    const maxTransitionDuration = config.maxRetentionTimeSec / 2
+    const transitionDurationSec = Math.min(config.transitionDurationSec, maxTransitionDuration)
+    if (transitionDurationSec !== config.transitionDurationSec) {
+      console.warn('transitionDurationSec * 2 > maxRetentionTimeSec, using maxRetentionTimeSec / 2 instead')
     }
 
     console.time('scaleMap')
-    const scaleMap = DataProcessor.getScaleMap(idGroups, endStep, stepSec, config, startStep)
+    const scaleMap = DataProcessor.getScaleMap(idGroups, endStep, stepSec, config, startStep, transitionDurationSec)
     console.timeEnd('scaleMap')
     // start step end step, fps, stepSec,
-    const totalFrame = totalSec * config.fps
-    const stepList = range(startStep, endStep, (endStep - startStep) / totalFrame)
+    const stepInterval = totalStep > 0 ? (endStep - startStep) / totalFrame : 0
+    let stepList: number[]
+    if (stepInterval > 0 && Number.isFinite(stepInterval)) {
+      stepList = range(startStep, endStep, stepInterval)
+      if (stepList.length === 0) {
+        stepList.push(endStep)
+      }
+      else if (stepList.at(-1) !== endStep) {
+        stepList.push(endStep)
+      }
+    }
+    else {
+      stepList = Array.from({ length: totalFrame }, () => startStep)
+    }
     console.time('fillRank')
     const result = DataProcessor.fillRank(stepList, scaleMap, config)
     console.timeEnd('fillRank')
@@ -73,7 +87,11 @@ export class DataProcessor {
     // 最后需要留出一次交换的时间，将最后一帧的数据复制 swapFrames 次
     for (let i = 0; i < swapFrames; i++) {
       // 为了避免引用问题，需要深拷贝
-      result.push(result.at(-1).map((d: any) => Object.assign({}, d)))
+      const lastFrame = result.at(-1)
+      if (!lastFrame) {
+        break
+      }
+      result.push(lastFrame.map((d: any) => Object.assign({}, d)))
     }
     const groupIDResult = group(result.flat(), d => d.id)
     for (const records of groupIDResult.values()) {
@@ -139,19 +157,29 @@ export class DataProcessor {
     return data
   }
 
-  private static getScaleMap(idGroups: InternMap<string, Data[]>, endStep: number, stepSec: number, config: Config, startStep: number) {
+  private static getScaleMap(
+    idGroups: InternMap<string, Data[]>,
+    endStep: number,
+    stepSec: number,
+    config: Config,
+    startStep: number,
+    transitionDurationSec: number,
+  ) {
     const scaleMap = new Map<string, ReturnType<typeof scaleLinear>>()
     for (let [key, group] of idGroups.entries()) {
-      group = group.sort((a, b) => a.step - b.step)
+      group = group.toSorted((a, b) => a.step - b.step)
       const last = group.at(-1)
-      if ((endStep - last.step) * stepSec > config.maxRetentionTimeSec * 1000) {
+      if (!last) {
+        continue
+      }
+      if ((endStep - last.step) * stepSec > config.maxRetentionTimeSec) {
         // 如果，最后一个时间戳距离结束时间超过了最大暂留时间，则需要插入 NaN
         // 在插入 NaN 之前，需要先插入一个时间戳，这个时间戳用于进入退出动画。
         group.push({
           id: last.id,
           label: last.label,
           value: last.value * config.decayRate,
-          step: last.step + config.transitionDurationSec / stepSec, // 退出动画的终点
+          step: last.step + transitionDurationSec / stepSec, // 退出动画的终点
           alpha: 0,
           up: false,
           raw: last.raw,
@@ -178,7 +206,7 @@ export class DataProcessor {
             id: cur.id,
             label: cur.label,
             value: cur.value * config.decayRate,
-            step: prevStep + config.transitionDurationSec / stepSec,
+            step: prevStep + transitionDurationSec / stepSec,
             raw: cur.raw,
             alpha: 0,
             up: false,
@@ -202,7 +230,7 @@ export class DataProcessor {
             id: cur.id,
             label: cur.label,
             value: cur.value * config.decayRate,
-            step: curStep - config.transitionDurationSec / stepSec,
+            step: curStep - transitionDurationSec / stepSec,
             raw: cur.raw,
             alpha: 0,
             up: true,
@@ -218,7 +246,7 @@ export class DataProcessor {
                 id: p.id,
                 label: p.label,
                 value: p.value * config.decayRate,
-                step: p.step + config.transitionDurationSec / stepSec,
+                step: p.step + transitionDurationSec / stepSec,
                 raw: p.raw,
                 alpha: 0,
                 up: false,
@@ -233,7 +261,7 @@ export class DataProcessor {
                 id: n.id,
                 label: n.label,
                 value: n.value * config.decayRate,
-                step: n.step - config.transitionDurationSec / stepSec,
+                step: n.step - transitionDurationSec / stepSec,
                 raw: n.raw,
                 alpha: 0,
                 up: true,
