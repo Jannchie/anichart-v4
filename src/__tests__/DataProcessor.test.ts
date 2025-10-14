@@ -1,9 +1,10 @@
+import type { ScaleLinear } from 'd3'
 import type { Data } from '../Data'
 import { describe, expect, it } from 'vitest'
 import { Config } from '../Config'
 import { DataProcessor } from '../DataProcessor'
 
-type LinearScale = ReturnType<(typeof import('d3'))['scaleLinear']>
+type LinearScale = ScaleLinear<Data, Data>
 
 const getScaleMap = (DataProcessor as any).getScaleMap as (
   idGroups: Map<string, Data[]>,
@@ -46,7 +47,7 @@ describe('dataprocessor.getscalemap', () => {
     const scale = scaleMap.get(id)
     expect(scale).toBeDefined()
     const domain = scale!.domain()
-    const range = scale!.range()
+    const range = scale!.range() as Data[]
     expect(domain).toEqual([
       0,
       2,
@@ -84,7 +85,7 @@ describe('dataprocessor.getscalemap', () => {
     const scale = scaleMap.get(id)
     expect(scale).toBeDefined()
     const domain = scale!.domain()
-    const range = scale!.range()
+    const range = scale!.range() as Data[]
     expect(domain).toEqual([
       0,
       transitionDurationSec,
@@ -120,7 +121,7 @@ describe('dataprocessor.getscalemap', () => {
     const scale = scaleMap.get(id)
     expect(scale).toBeDefined()
     const domain = scale!.domain()
-    const range = scale!.range()
+    const range = scale!.range() as Data[]
     expect(domain).toEqual([
       0,
       transitionDurationSec,
