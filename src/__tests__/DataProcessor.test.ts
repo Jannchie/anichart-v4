@@ -25,11 +25,10 @@ function createData(id: string, step: number, value: number, overrides: Partial<
     raw: overrides.raw ?? { id, step },
     up: overrides.up ?? false,
   }
-  Object.assign(base, overrides)
-  return base
+  return Object.assign(base, overrides)
 }
 
-describe('dataprocessor.getscalemap', () => {
+describe('DataProcessor.getScaleMap', () => {
   it('inserts exit placeholders when the final data point exceeds the retention window', () => {
     const id = 'alpha'
     const data: Data[] = [
@@ -139,5 +138,113 @@ describe('dataprocessor.getscalemap', () => {
     expect(entryNode.value).toBeCloseTo(40 * config.decayRate)
     expect(entryNode.alpha).toBe(0)
     expect(entryNode.up).toBe(true)
+  })
+
+  it('does not mutate the original id group array', () => {
+    const id = 'delta'
+    const originalGroup = [
+      createData(id, 0, 3),
+      createData(id, 1, 5),
+    ]
+    const snapshot = originalGroup.map(d => ({ ...d }))
+    const config = new Config()
+    const transitionDurationSec = Math.min(config.transitionDurationSec, config.maxRetentionTimeSec / 2)
+    const scaleMap = getScaleMap(new Map([[id, originalGroup]]) as any, 2, 1, config, 0, transitionDurationSec)
+    expect(scaleMap.get(id)).toBeDefined()
+    expect(originalGroup).toHaveLength(snapshot.length)
+    originalGroup.forEach((item, index) => {
+      expect(item).toStrictEqual(snapshot[index])
+    })
+  })
+
+  it('keeps the original domain when gaps stay within retention window', () => {
+    const id = 'epsilon'
+    const data: Data[] = [
+      createData(id, 0, 5),
+      createData(id, 1, 7),
+      createData(id, 2, 9),
+    ]
+    const config = new Config()
+    const transitionDurationSec = Math.min(config.transitionDurationSec, config.maxRetentionTimeSec / 2)
+    const scaleMap = getScaleMap(new Map([[id, data]]) as any, 2, 1, config, 0, transitionDurationSec)
+    const scale = scaleMap.get(id)
+    expect(scale).toBeDefined()
+    expect(scale!.domain()).toEqual([0, 1, 2])
+    expect(scale!.range()).toHaveLength(3)
+  })
+
+  it('adds an entry transition when the first point is NaN', () => {
+    const id = 'zeta'
+    const data: Data[] = [
+      createData(id, 0, Number.NaN, { alpha: 0 }),
+      createData(id, 4, 12),
+    ]
+    const config = new Config()
+    const transitionDurationSec = Math.min(config.transitionDurationSec, config.maxRetentionTimeSec / 2)
+    const stepSec = 1
+    const transitionSteps = transitionDurationSec / stepSec
+    const scaleMap = getScaleMap(new Map([[id, data]]) as any, 4, stepSec, config, 0, transitionDurationSec)
+    const scale = scaleMap.get(id)
+    expect(scale).toBeDefined()
+    const domain = scale!.domain()
+    expect(domain.at(0)).toBe(0)
+    expect(domain.at(1)).toBeCloseTo(4 - transitionSteps)
+    const range = scale!.range() as Data[]
+    const transitionNode = range[1]
+    expect(transitionNode.value).toBeCloseTo(12 * config.decayRate)
+    expect(transitionNode.up).toBe(true)
+    expect(transitionNode.alpha).toBe(0)
+  })
+
+  it('prefers the nearest raw snapshot during interpolation', () => {
+    const id = 'eta'
+    const a = createData(id, 0, 10, { raw: { source: 'a' } })
+    const b = createData(id, 10, 20, { raw: { source: 'b' } })
+    const config = new Config({ maxRetentionTimeSec: 100 })
+    const transitionDurationSec = Math.min(config.transitionDurationSec, config.maxRetentionTimeSec / 2)
+    const scaleMap = getScaleMap(new Map([[id, [a, b]]]) as any, 10, 1, config, 0, transitionDurationSec)
+    const scale = scaleMap.get(id)
+    expect(scale).toBeDefined()
+    const interpolated = scale!(7) as Data
+    expect(interpolated.raw).toEqual({ source: 'b' })
+    expect(interpolated.raw).not.toBe(b.raw)
+    const nearStart = scale!(2) as Data
+    expect(nearStart.raw).toEqual({ source: 'a' })
+    expect(nearStart.raw).not.toBe(a.raw)
+  })
+})
+
+describe('DataProcessor.fillRank', () => {
+  const fillRank = (DataProcessor as any).fillRank as (
+    stepList: number[],
+    scaleMap: Map<string, LinearScale>,
+    config: Config,
+  ) => any[][]
+
+  const createConstantScale = (data: Data | undefined): LinearScale => {
+    const scale = ((_: number) => data) as unknown as LinearScale
+    return scale
+  }
+
+  it('orders entries by value and keeps topN plus one extra', () => {
+    const config = new Config({ topN: 2 })
+    const stepList = [0]
+    const scales = new Map<string, LinearScale>([
+      ['alpha', createConstantScale(createData('alpha', 0, 12))],
+      ['beta', createConstantScale(createData('beta', 0, 30))],
+      ['gamma', createConstantScale(createData('gamma', 0, Number.NaN))],
+      ['delta', createConstantScale(createData('delta', 0, 20))],
+    ])
+    const frames = fillRank(stepList, scales, config)
+    expect(frames).toHaveLength(1)
+    const [frame] = frames
+    expect(frame).toHaveLength(config.topN + 1)
+    const values = frame.map(d => d.value)
+    expect(values).toEqual([30, 20, 12])
+    frame.forEach((item, index) => {
+      expect(item.rank).toBe(index)
+    })
+    const ids = frame.map(d => d.id)
+    expect(ids).not.toContain('gamma')
   })
 })
