@@ -1,4 +1,4 @@
-import { defineConfig } from 'vitepress';
+import { defineConfig } from 'vitepress'
 
 export default defineConfig({
   lang: 'zh-CN',
@@ -8,7 +8,7 @@ export default defineConfig({
     nav: [
       { text: '指南', link: '/guide/getting-started' },
       { text: '参考', link: '/reference/bar-chart' },
-      { text: 'GitHub', link: 'https://github.com/jannchie/anichart-v4' }
+      { text: 'GitHub', link: 'https://github.com/jannchie/anichart-v4' },
     ],
     sidebar: {
       '/guide/': [
@@ -17,9 +17,9 @@ export default defineConfig({
           items: [
             { text: '快速上手', link: '/guide/getting-started' },
             { text: '数据准备', link: '/guide/data-preparation' },
-            { text: '样式定制', link: '/guide/customization' }
-          ]
-        }
+            { text: '样式定制', link: '/guide/customization' },
+          ],
+        },
       ],
       '/reference/': [
         {
@@ -27,17 +27,17 @@ export default defineConfig({
           items: [
             { text: 'BarChart', link: '/reference/bar-chart' },
             { text: 'Config', link: '/reference/config' },
-            { text: 'DataProcessor', link: '/reference/data-processor' }
-          ]
-        }
-      ]
+            { text: 'DataProcessor', link: '/reference/data-processor' },
+          ],
+        },
+      ],
     },
     outline: {
       level: [2, 3],
-      label: '目录'
+      label: '目录',
     },
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/jannchie/anichart-v4' }
-    ]
-  }
-});
+      { icon: 'github', link: 'https://github.com/jannchie/anichart-v4' },
+    ],
+  },
+})

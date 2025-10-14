@@ -1,3 +1,4 @@
+import type { ScaleLinear } from 'd3'
 import type { Config } from './Config'
 import type { RankedData } from './Data'
 import { blur, extent, InternSet, scaleLinear } from 'd3'
@@ -35,12 +36,18 @@ export class BarChart extends Container {
   xAxisLabelPadding: number = 10
   tickWidthMap: Map<number, number>
   textWidthCache: Map<string, number>
+  frameValueScales: ScaleLinear<number, number>[]
+  frameIdSets: InternSet<string>[]
+  frameMaxSteps: Array<number | undefined>
   constructor(data: RankedData[][], config: Config) {
     super()
     this.config = config
     this.data = data
     this.tickWidthMap = new Map()
     this.textWidthCache = new Map()
+    const frameValueScales: ScaleLinear<number, number>[] = []
+    const frameIdSets: InternSet<string>[] = []
+    const frameMaxSteps: Array<number | undefined> = []
     const idList = [...new InternSet(data.flat().map(d => d.id))]
     const idImageMap = new Map(new InternSet(data.flat().map((d) => {
       return [d.id, textureMap.get(d.raw[config.imageField])]
@@ -64,6 +71,21 @@ export class BarChart extends Container {
 
     for (const [i, d] of data.entries()) {
       const [min, max] = extent(d, config.getValue)
+      frameValueScales[i] = getValueScale(config.valueScaleType, min, max, config.valueScaleDelta)
+      frameIdSets[i] = new InternSet(d.map(item => item.id))
+      if (d.length > 0) {
+        let maxStep = d[0].step
+        for (let idx = 1; idx < d.length; idx += 1) {
+          const step = d[idx].step
+          if (step > maxStep) {
+            maxStep = step
+          }
+        }
+        frameMaxSteps[i] = maxStep
+      }
+      else {
+        frameMaxSteps[i] = undefined
+      }
       const scale = getValueScale(config.valueScaleType, min, max)
       const ticks = scale.ticks(config.tickNum)
 
@@ -192,6 +214,16 @@ export class BarChart extends Container {
     this.barMain.position.set(maxLabelWidth, this.xAxisLabel.height + this.xAxisLabelPadding + this.tickLabelHeight)
     this.xAxis.position.set(maxLabelWidth + config.leftLabelPadding, 0)
     this.barComponentMap = barComponentMap
+    this.frameValueScales = frameValueScales
+    this.frameIdSets = frameIdSets
+    this.frameMaxSteps = frameMaxSteps
+    if (config.showStepLabel) {
+      stepLabel.anchor.set(1, 1)
+      stepLabel.position.set(config.width, config.height)
+    }
+    else {
+      stepLabel.renderable = false
+    }
   }
 
   private getMaxLabelWidth(labels: string[], config: Config) {
@@ -276,11 +308,12 @@ export class BarChart extends Container {
     }
     const config = this.config
     const data = this.data[idx]
-    if (idx >= this.data.length) {
-      return
+    let valueScale = this.frameValueScales[idx]
+    if (!valueScale) {
+      const [min, max] = extent(data, d => d.value)
+      valueScale = getValueScale(config.valueScaleType, min, max, config.valueScaleDelta)
+      this.frameValueScales[idx] = valueScale
     }
-    const [min, max] = extent(data, d => d.value)
-    const valueScale = getValueScale(config.valueScaleType, min, max, config.valueScaleDelta)
     for (const [tick, alphaList] of this.ticksAlphaMap.entries()) {
       const tickComp = this.ticksComponentMap.get(tick)!
       tickComp.alpha = alphaList[idx]
@@ -290,7 +323,11 @@ export class BarChart extends Container {
       }
       tickComp.position.set(valueScale(tick) * this.maxBarWidth - width / 2, 0)
     }
-    const barIdSet = new InternSet(data.map(d => d.id))
+    let barIdSet = this.frameIdSets[idx]
+    if (!barIdSet) {
+      barIdSet = new InternSet(data.map(d => d.id))
+      this.frameIdSets[idx] = barIdSet
+    }
     for (const [i, d] of data.entries()) {
       const bar = this.barComponentMap.get(d.id)!
 
@@ -313,12 +350,8 @@ export class BarChart extends Container {
       }
     }
     if (this.config.showStepLabel) {
-      this.stepLabel.anchor.set(1, 1)
-      // 设置 step label 的位置
-      this.stepLabel.position.set(config.width, config.height)
-      // 获取所有数据中最大的 step 值
-      const maxStep = Math.max(...this.data[idx].map(d => d.step))
-      this.stepLabel.text = config.getStepLabel(maxStep)
+      const maxStep = this.frameMaxSteps[idx]
+      this.stepLabel.text = maxStep === undefined ? '' : config.getStepLabel(maxStep)
     }
     else {
       this.stepLabel.renderable = false

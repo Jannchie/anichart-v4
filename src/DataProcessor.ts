@@ -267,16 +267,16 @@ export class DataProcessor {
         .range(expanded)
         .clamp(true)
         .interpolate((a, b) => {
-        const inter = interpolate(a, b)
-        return (t) => {
-          const res = inter(t)
-          if (res) {
+          const inter = interpolate(a, b)
+          return (t) => {
+            const res = inter(t)
+            if (res) {
             // 使用更接近目标点的 raw 数据
-            res.raw = t > 0.5 ? { ...b.raw } : { ...a.raw }
+              res.raw = t > 0.5 ? { ...b.raw } : { ...a.raw }
+            }
+            return res
           }
-          return res
-        }
-      })
+        })
       scaleMap.set(key, scale)
     }
     return scaleMap

@@ -28,7 +28,7 @@ function createData(id: string, step: number, value: number, overrides: Partial<
   return Object.assign(base, overrides)
 }
 
-describe('DataProcessor.getScaleMap', () => {
+describe('dataprocessor.getscalemap', () => {
   it('inserts exit placeholders when the final data point exceeds the retention window', () => {
     const id = 'alpha'
     const data: Data[] = [
@@ -173,7 +173,7 @@ describe('DataProcessor.getScaleMap', () => {
     expect(scale!.range()).toHaveLength(3)
   })
 
-  it('adds an entry transition when the first point is NaN', () => {
+  it('adds an entry transition when the first point is nan', () => {
     const id = 'zeta'
     const data: Data[] = [
       createData(id, 0, Number.NaN, { alpha: 0 }),
@@ -219,14 +219,14 @@ function createConstantScale(data: Data | undefined): LinearScale {
   return scale
 }
 
-describe('DataProcessor.fillRank', () => {
+describe('dataprocessor.fillrank', () => {
   const fillRank = (DataProcessor as any).fillRank as (
     stepList: number[],
     scaleMap: Map<string, LinearScale>,
     config: Config,
   ) => any[][]
 
-  it('orders entries by value and keeps topN plus one extra', () => {
+  it('orders entries by value and keeps topn plus one extra', () => {
     const config = new Config({ topN: 2 })
     const stepList = [0]
     const scales = new Map<string, LinearScale>([
