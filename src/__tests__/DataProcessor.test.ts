@@ -46,7 +46,7 @@ describe('DataProcessor.getScaleMap', () => {
     const scale = scaleMap.get(id)
     expect(scale).toBeDefined()
     const domain = scale!.domain()
-    const range = scale!.range() as Data[]
+    const range = scale!.range()
     expect(domain).toEqual([
       0,
       2,
@@ -84,7 +84,7 @@ describe('DataProcessor.getScaleMap', () => {
     const scale = scaleMap.get(id)
     expect(scale).toBeDefined()
     const domain = scale!.domain()
-    const range = scale!.range() as Data[]
+    const range = scale!.range()
     expect(domain).toEqual([
       0,
       transitionDurationSec,
@@ -120,7 +120,7 @@ describe('DataProcessor.getScaleMap', () => {
     const scale = scaleMap.get(id)
     expect(scale).toBeDefined()
     const domain = scale!.domain()
-    const range = scale!.range() as Data[]
+    const range = scale!.range()
     expect(domain).toEqual([
       0,
       transitionDurationSec,
@@ -152,9 +152,9 @@ describe('DataProcessor.getScaleMap', () => {
     const scaleMap = getScaleMap(new Map([[id, originalGroup]]) as any, 2, 1, config, 0, transitionDurationSec)
     expect(scaleMap.get(id)).toBeDefined()
     expect(originalGroup).toHaveLength(snapshot.length)
-    originalGroup.forEach((item, index) => {
+    for (const [index, item] of originalGroup.entries()) {
       expect(item).toStrictEqual(snapshot[index])
-    })
+    }
   })
 
   it('keeps the original domain when gaps stay within retention window', () => {
@@ -189,7 +189,7 @@ describe('DataProcessor.getScaleMap', () => {
     const domain = scale!.domain()
     expect(domain.at(0)).toBe(0)
     expect(domain.at(1)).toBeCloseTo(4 - transitionSteps)
-    const range = scale!.range() as Data[]
+    const range = scale!.range()
     const transitionNode = range[1]
     expect(transitionNode.value).toBeCloseTo(12 * config.decayRate)
     expect(transitionNode.up).toBe(true)
@@ -205,14 +205,19 @@ describe('DataProcessor.getScaleMap', () => {
     const scaleMap = getScaleMap(new Map([[id, [a, b]]]) as any, 10, 1, config, 0, transitionDurationSec)
     const scale = scaleMap.get(id)
     expect(scale).toBeDefined()
-    const interpolated = scale!(7) as Data
+    const interpolated = scale!(7)
     expect(interpolated.raw).toEqual({ source: 'b' })
     expect(interpolated.raw).not.toBe(b.raw)
-    const nearStart = scale!(2) as Data
+    const nearStart = scale!(2)
     expect(nearStart.raw).toEqual({ source: 'a' })
     expect(nearStart.raw).not.toBe(a.raw)
   })
 })
+
+function createConstantScale(data: Data | undefined): LinearScale {
+  const scale = ((_: number) => data) as unknown as LinearScale
+  return scale
+}
 
 describe('DataProcessor.fillRank', () => {
   const fillRank = (DataProcessor as any).fillRank as (
@@ -220,11 +225,6 @@ describe('DataProcessor.fillRank', () => {
     scaleMap: Map<string, LinearScale>,
     config: Config,
   ) => any[][]
-
-  const createConstantScale = (data: Data | undefined): LinearScale => {
-    const scale = ((_: number) => data) as unknown as LinearScale
-    return scale
-  }
 
   it('orders entries by value and keeps topN plus one extra', () => {
     const config = new Config({ topN: 2 })
@@ -241,9 +241,9 @@ describe('DataProcessor.fillRank', () => {
     expect(frame).toHaveLength(config.topN + 1)
     const values = frame.map(d => d.value)
     expect(values).toEqual([30, 20, 12])
-    frame.forEach((item, index) => {
+    for (const [index, item] of frame.entries()) {
       expect(item.rank).toBe(index)
-    })
+    }
     const ids = frame.map(d => d.id)
     expect(ids).not.toContain('gamma')
   })

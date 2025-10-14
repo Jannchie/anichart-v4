@@ -9,3 +9,8 @@ export interface Data {
 
   [key: string]: any
 }
+
+export interface RankedData extends Data {
+  rank: number
+  blurRank: number
+}

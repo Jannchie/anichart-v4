@@ -1,11 +1,11 @@
 /* eslint-disable no-console */
 import type { DSVRowArray, InternMap, ScaleLinear } from 'd3'
 import type { Config } from './Config'
-import type { Data } from './Data'
+import type { Data, RankedData } from './Data'
 import { blur, csv, extent, group, InternSet, interpolate, range, scaleLinear } from 'd3'
 
 export class DataProcessor {
-  static async processCSV(path: string, config: Config): Promise<Data[][]> {
+  static async processCSV(path: string, config: Config): Promise<RankedData[][]> {
     const rawData = await csv(path)
     console.time('process')
     const data = DataProcessor.preprocess(rawData, config)
@@ -52,14 +52,18 @@ export class DataProcessor {
     return result
   }
 
-  private static fillRank(stepList: number[], scaleMap: Map<string, ScaleLinear<unknown, unknown, unknown>>, config: Config) {
+  private static fillRank(stepList: number[], scaleMap: Map<string, ScaleLinear<Data, Data>>, config: Config) {
     return stepList.map((step) => {
-      const list: any[] = []
+      const list: RankedData[] = []
       for (const scale of scaleMap.values()) {
         const scaledData = scale(step)
         if (scaledData) {
-          const d = Object.assign({}, scaledData)
-          list.push(d)
+          const cloned: RankedData = {
+            ...scaledData,
+            rank: 0,
+            blurRank: 0,
+          }
+          list.push(cloned)
         }
       }
       // 根据 value 排序
@@ -76,12 +80,15 @@ export class DataProcessor {
       // 多留一位
       return list.slice(0, config.topN + 1).map((d, i) => {
         d.rank = i // 填上排名
+        if (d.blurRank === 0) {
+          d.blurRank = i
+        }
         return d
       })
     })
   }
 
-  private static addTailingFrames(config: Config, result: any[][]) {
+  private static addTailingFrames(config: Config, result: RankedData[][]) {
     // swap 占用的帧数：
     const swapFrames = config.swapDurationSec * config.fps
     // 最后需要留出一次交换的时间，将最后一帧的数据复制 swapFrames 次
@@ -91,7 +98,7 @@ export class DataProcessor {
       if (!lastFrame) {
         break
       }
-      result.push(lastFrame.map((d: any) => Object.assign({}, d)))
+      result.push(lastFrame.map(d => ({ ...d })))
     }
     const groupIDResult = group(result.flat(), d => d.id)
     for (const records of groupIDResult.values()) {
@@ -165,7 +172,7 @@ export class DataProcessor {
     startStep: number,
     transitionDurationSec: number,
   ) {
-    const scaleMap = new Map<string, ReturnType<typeof scaleLinear>>()
+    const scaleMap = new Map<string, ScaleLinear<Data, Data>>()
     const transitionSteps = transitionDurationSec / stepSec
     const retentionSteps = config.maxRetentionTimeSec / stepSec
     const decayRate = config.decayRate
@@ -255,13 +262,11 @@ export class DataProcessor {
         }
         prevStep = curStep
       }
-      const scale = scaleLinear<{
-        id: string
-        label: string
-        value: number
-        step: number
-        raw: any
-      }>().domain(expanded.map(d => d.step)).range(expanded).clamp(true).interpolate((a, b) => {
+      const scale = scaleLinear<Data>()
+        .domain(expanded.map(d => d.step))
+        .range(expanded)
+        .clamp(true)
+        .interpolate((a, b) => {
         const inter = interpolate(a, b)
         return (t) => {
           const res = inter(t)

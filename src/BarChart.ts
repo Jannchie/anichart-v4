@@ -1,5 +1,5 @@
 import type { Config } from './Config'
-import type { Data } from './Data'
+import type { RankedData } from './Data'
 import { blur, extent, InternSet, scaleLinear } from 'd3'
 import { CanvasTextMetrics, Container, Graphics, Sprite, Text, TextStyle } from 'pixi.js'
 import { BarComponent, EXTRA_VALUE_LABEL_PADDING } from './bar'
@@ -24,7 +24,7 @@ export class BarChart extends Container {
   barComponentMap: Map<string, BarComponent>
   xAxis: Container
   stepLabel: Text
-  data: Data[][]
+  data: RankedData[][]
   config: Config
   ticksAlphaMap: Map<number, number[]>
   ticksComponentMap: Map<number, Container>
@@ -33,10 +33,14 @@ export class BarChart extends Container {
   xAxisLabel: Text
   xAxisTickContainer: Container
   xAxisLabelPadding: number = 10
-  constructor(data: Data[][], config: Config) {
+  tickWidthMap: Map<number, number>
+  textWidthCache: Map<string, number>
+  constructor(data: RankedData[][], config: Config) {
     super()
     this.config = config
     this.data = data
+    this.tickWidthMap = new Map()
+    this.textWidthCache = new Map()
     const idList = [...new InternSet(data.flat().map(d => d.id))]
     const idImageMap = new Map(new InternSet(data.flat().map((d) => {
       return [d.id, textureMap.get(d.raw[config.imageField])]
@@ -108,6 +112,7 @@ export class BarChart extends Container {
           tickComp.position.set(-tickWidth / 2, 0)
           ticksComponentMap.set(tick, tickComp)
           this.xAxisTickContainer.addChild(tickComp)
+          this.tickWidthMap.set(tick, tickWidth)
         }
       }
     }
@@ -200,13 +205,13 @@ export class BarChart extends Container {
     let maxLabelWidth = 0
     // 计算最大的 label 宽度
     for (const label of labels) {
-      const metrics = CanvasTextMetrics.measureText(label ?? '', style)
-      maxLabelWidth = Math.max(maxLabelWidth, metrics.width)
+      const width = this.measureTextWidth(label ?? '', style)
+      maxLabelWidth = Math.max(maxLabelWidth, width)
     }
     return maxLabelWidth
   }
 
-  private getMaxValueLabelWidth(data: Data[][], config: Config) {
+  private getMaxValueLabelWidth(data: RankedData[][], config: Config) {
     const flatData = data.flat()
     if (flatData.length === 0) {
       return 0
@@ -240,14 +245,29 @@ export class BarChart extends Container {
   }
 
   private measureTextWidth(text: string, style: TextStyle) {
+    const cacheKey = this.getTextWidthCacheKey(text, style)
+    const cached = this.textWidthCache.get(cacheKey)
+    if (cached !== undefined) {
+      return cached
+    }
     try {
-      return CanvasTextMetrics.measureText(text, style).width
+      const width = CanvasTextMetrics.measureText(text, style).width
+      this.textWidthCache.set(cacheKey, width)
+      return width
     }
     catch {
       const fontSize = typeof style.fontSize === 'number' ? style.fontSize : Number.parseFloat(String(style.fontSize)) || 0
       const averageCharWidth = fontSize * 0.6
-      return text.length * averageCharWidth
+      const fallbackWidth = text.length * averageCharWidth
+      this.textWidthCache.set(cacheKey, fallbackWidth)
+      return fallbackWidth
     }
+  }
+
+  private getTextWidthCacheKey(text: string, style: TextStyle) {
+    const fontFamily = Array.isArray(style.fontFamily) ? style.fontFamily.join(',') : style.fontFamily ?? ''
+    const fontSize = typeof style.fontSize === 'number' ? style.fontSize : String(style.fontSize ?? '')
+    return `${fontFamily}|${fontSize}|${text}`
   }
 
   update(idx: number) {
@@ -264,7 +284,10 @@ export class BarChart extends Container {
     for (const [tick, alphaList] of this.ticksAlphaMap.entries()) {
       const tickComp = this.ticksComponentMap.get(tick)!
       tickComp.alpha = alphaList[idx]
-      const width = tickComp.children[0].getBounds().width
+      const width = this.tickWidthMap.get(tick) ?? tickComp.children[0].getBounds().width
+      if (!this.tickWidthMap.has(tick)) {
+        this.tickWidthMap.set(tick, width)
+      }
       tickComp.position.set(valueScale(tick) * this.maxBarWidth - width / 2, 0)
     }
     const barIdSet = new InternSet(data.map(d => d.id))

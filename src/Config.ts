@@ -82,8 +82,8 @@ export class Config {
   valueLabelPadding: number
   x: number
   y: number
-  width: number
-  height: number
+  width!: number
+  height!: number
   showStepLabel: boolean
   getStepLabel: (step: number) => string
   borderRadius: number
