@@ -6,6 +6,8 @@ import { CanvasTextMetrics, Container, Graphics, Sprite, Text, TextStyle } from 
 import { BarComponent, EXTRA_VALUE_LABEL_PADDING } from './bar'
 import { textureMap } from './main'
 
+const LAYER_SETTLE_EPSILON = 0.01
+
 function getValueScale(type: string, min?: number, max?: number, delta: number = 1000) {
   min = min || 0
   max = max || 1
@@ -39,6 +41,7 @@ export class BarChart extends Container {
   frameValueScales: ScaleLinear<number, number>[]
   frameIdSets: InternSet<string>[]
   frameMaxSteps: Array<number | undefined>
+  barLayerDirection: Map<string, 'up' | 'down'>
   constructor(data: RankedData[][], config: Config) {
     super()
     this.config = config
@@ -48,6 +51,7 @@ export class BarChart extends Container {
     const frameValueScales: ScaleLinear<number, number>[] = []
     const frameIdSets: InternSet<string>[] = []
     const frameMaxSteps: Array<number | undefined> = []
+    const barLayerDirection = new Map<string, 'up' | 'down'>()
     const idList = [...new InternSet(data.flat().map(d => d.id))]
     const idImageMap = new Map(new InternSet(data.flat().map((d) => {
       return [d.id, textureMap.get(d.raw[config.imageField])]
@@ -217,6 +221,7 @@ export class BarChart extends Container {
     this.frameValueScales = frameValueScales
     this.frameIdSets = frameIdSets
     this.frameMaxSteps = frameMaxSteps
+    this.barLayerDirection = barLayerDirection
     if (config.showStepLabel) {
       stepLabel.anchor.set(1, 1)
       stepLabel.position.set(config.width, config.height)
@@ -330,8 +335,22 @@ export class BarChart extends Container {
     }
     for (const [i, d] of data.entries()) {
       const bar = this.barComponentMap.get(d.id)!
-
-      bar.zIndex = d.up ? 2 : 1
+      const previousDirection = this.barLayerDirection.get(d.id)
+      const isSettled = Math.abs(d.blurRank - d.rank) < LAYER_SETTLE_EPSILON
+      let effectiveDirection = previousDirection ?? (d.up ? 'up' : 'down')
+      if (d.up) {
+        effectiveDirection = 'up'
+      }
+      else if (effectiveDirection === 'up') {
+        if (isSettled) {
+          effectiveDirection = 'down'
+        }
+      }
+      else {
+        effectiveDirection = 'down'
+      }
+      this.barLayerDirection.set(d.id, effectiveDirection)
+      bar.zIndex = effectiveDirection === 'up' ? 2 : 1
 
       bar.update({
         y: d.blurRank * (config.barHeight + config.barGap),
