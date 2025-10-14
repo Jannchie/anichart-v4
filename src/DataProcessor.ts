@@ -166,108 +166,91 @@ export class DataProcessor {
     transitionDurationSec: number,
   ) {
     const scaleMap = new Map<string, ReturnType<typeof scaleLinear>>()
-    for (let [key, group] of idGroups.entries()) {
-      group = group.toSorted((a, b) => a.step - b.step)
-      const last = group.at(-1)
+    const transitionSteps = transitionDurationSec / stepSec
+    const retentionSteps = config.maxRetentionTimeSec / stepSec
+    const decayRate = config.decayRate
+    const createNode = (source: Data, overrides: Partial<Data>): Data => ({
+      id: source.id,
+      label: source.label,
+      value: overrides.value ?? source.value,
+      step: overrides.step ?? source.step,
+      raw: overrides.raw ?? source.raw,
+      alpha: overrides.alpha ?? source.alpha ?? 0,
+      up: overrides.up ?? source.up ?? false,
+    })
+
+    for (const [key, originalGroup] of idGroups.entries()) {
+      const sortedGroup = originalGroup.toSorted((a, b) => a.step - b.step)
+      const last = sortedGroup.at(-1)
       if (!last) {
         continue
       }
+      const baseSequence: Data[] = [...sortedGroup]
       if ((endStep - last.step) * stepSec > config.maxRetentionTimeSec) {
-        // 如果，最后一个时间戳距离结束时间超过了最大暂留时间，则需要插入 NaN
-        // 在插入 NaN 之前，需要先插入一个时间戳，这个时间戳用于进入退出动画。
-        group.push({
-          id: last.id,
-          label: last.label,
-          value: last.value * config.decayRate,
-          step: last.step + transitionDurationSec / stepSec, // 退出动画的终点
-          alpha: 0,
-          up: false,
-          raw: last.raw,
-        }, {
-          id: last.id,
-          label: last.label,
-          value: Number.NaN,
-          alpha: 0,
-          step: endStep, // 最后一个时间戳
-          raw: last.raw,
-          up: false,
-        })
+        baseSequence.push(
+          createNode(last, {
+            value: last.value * decayRate,
+            step: last.step + transitionSteps, // 退出动画的终点
+            alpha: 0,
+            up: false,
+          }),
+          createNode(last, {
+            value: Number.NaN,
+            step: endStep, // 最后一个时间戳
+            alpha: 0,
+            up: false,
+          }),
+        )
       }
       let prevStep = startStep
-
-      for (let i = 0; i < group.length; i++) {
-        const cur = group[i]
+      const expanded: Data[] = []
+      for (let i = 0; i < baseSequence.length; i++) {
+        const cur = baseSequence[i]
         const curStep = cur.step
         if ((curStep - prevStep) * stepSec > config.maxRetentionTimeSec) {
-          // 如果当前时间戳和上一个时间戳的间隔超过了最大时间间隔，则需要插入 NaN
-          // 一个需要插入在 prevStep 后 maxIntervalStep 的位置
-          // 一个需要插入在 curStep 前 maxIntervalStep 的位置
-          group.splice(i, 0, {
-            id: cur.id,
-            label: cur.label,
-            value: cur.value * config.decayRate,
-            step: prevStep + transitionDurationSec / stepSec,
-            raw: cur.raw,
-            alpha: 0,
-            up: false,
-          })
-          i++ // 插入了一个元素，所以需要跳过这个元素
-
-          // 在中间插入 NaN
-          group.splice(i, 0, {
-            id: cur.id,
-            label: cur.label,
-            value: cur.value * config.decayRate,
-            step: prevStep + config.maxRetentionTimeSec / stepSec,
-            raw: cur.raw,
-            alpha: 0,
-            up: false,
-          })
-          i++ // 插入了一个元素，所以需要跳过这个元素
-
-          // 如果正好两倍则只用插入一个，否则还需要插入一个，这个插在 curStep 前 maxIntervalStep 的位置，用于进入动画
-          group.splice(i, 0, {
-            id: cur.id,
-            label: cur.label,
-            value: cur.value * config.decayRate,
-            step: curStep - transitionDurationSec / stepSec,
-            raw: cur.raw,
-            alpha: 0,
-            up: true,
-          })
-          i++ // 插入了一个元素，所以需要跳过这个元素
+          expanded.push(
+            createNode(cur, {
+              value: cur.value * decayRate,
+              step: prevStep + transitionSteps,
+              alpha: 0,
+              up: false,
+            }),
+            createNode(cur, {
+              value: cur.value * decayRate,
+              step: prevStep + retentionSteps,
+              alpha: 0,
+              up: false,
+            }),
+            createNode(cur, {
+              value: cur.value * decayRate,
+              step: curStep - transitionSteps,
+              alpha: 0,
+              up: true,
+            }),
+          )
         }
         // 如果 cur 的值是 NaN，则前后点需要加过渡元素
         if (Number.isNaN(cur.value)) {
-          if (i > 0) {
-            const p = group[i - 1] // 前一个节点后，退出
-            if (!Number.isNaN(p.value)) {
-              group.splice(i, 0, {
-                id: p.id,
-                label: p.label,
-                value: p.value * config.decayRate,
-                step: p.step + transitionDurationSec / stepSec,
-                raw: p.raw,
-                alpha: 0,
-                up: false,
-              })
-              i++
-            }
+          const prev = expanded.at(-1)
+          if (prev && !Number.isNaN(prev.value)) {
+            expanded.push(createNode(prev, {
+              value: prev.value * decayRate,
+              step: prev.step + transitionSteps,
+              alpha: 0,
+              up: false,
+            }))
           }
-          if (i < group.length - 1) {
-            const n = group[i + 1] // 后一个节点前，进入
-            if (!Number.isNaN(n.value)) {
-              group.splice(i + 1, 0, {
-                id: n.id,
-                label: n.label,
-                value: n.value * config.decayRate,
-                step: n.step - transitionDurationSec / stepSec,
-                raw: n.raw,
-                alpha: 0,
-                up: true,
-              })
-              i++
-            }
+        }
+        expanded.push(cur)
+        if (Number.isNaN(cur.value)) {
+          const next = baseSequence[i + 1]
+          if (next && !Number.isNaN(next.value)) {
+            expanded.push(createNode(next, {
+              value: next.value * decayRate,
+              step: next.step - transitionSteps,
+              alpha: 0,
+              up: true,
+            }))
           }
         }
         prevStep = curStep
@@ -278,7 +261,7 @@ export class DataProcessor {
         value: number
         step: number
         raw: any
-      }>().domain(group.map(d => d.step)).range(group).clamp(true).interpolate((a, b) => {
+      }>().domain(expanded.map(d => d.step)).range(expanded).clamp(true).interpolate((a, b) => {
         const inter = interpolate(a, b)
         return (t) => {
           const res = inter(t)
