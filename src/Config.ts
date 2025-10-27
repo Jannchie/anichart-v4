@@ -33,6 +33,7 @@ interface IConfig {
   barHeight: number
   valueScaleType: string
   valueScaleDelta: number
+  valueScaleSmoothing: number
   leftLabelPadding: number
   valueLabelPadding: number
   x: number
@@ -79,6 +80,7 @@ export class Config {
   barHeight: number
   autoBarHeight: boolean = true
   valueScaleType: string
+  valueScaleSmoothing: number
   leftLabelPadding: number
   valueLabelPadding: number
   x: number
@@ -135,6 +137,7 @@ export class Config {
     this.barHeight = 24
     this.valueScaleType = 'from-zero'
     this.valueScaleDelta = 300
+    this.valueScaleSmoothing = 0
     this.leftLabelPadding = 5
     this.valueLabelPadding = 5
     this.x = 10
@@ -150,7 +153,12 @@ export class Config {
     this.xAxisLabel = ''
     const widthProvided = Object.prototype.hasOwnProperty.call(config, 'width')
     const heightProvided = Object.prototype.hasOwnProperty.call(config, 'height')
+    const valueScaleSmoothingProvided = Object.prototype.hasOwnProperty.call(config, 'valueScaleSmoothing')
     Object.assign(this, config)
+    if (!valueScaleSmoothingProvided) {
+      const smoothingWindow = Math.max(1, Math.round(this.swapDurationSec * this.fps / 2))
+      this.valueScaleSmoothing = smoothingWindow
+    }
     if (!widthProvided) {
       this.width = this.canvasWidth - 20
     }

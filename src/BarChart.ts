@@ -60,9 +60,8 @@ export class BarChart extends Container {
     this.xAxisTickContainer = new Container()
     // 计算 ticks 对象
     // 遍历 data
-    const ticksAlphaMap = new Map<number, Array<number>>()
-    const ticksComponentMap = new Map<number, Container>()
-    const tickSet = new InternSet<number>()
+    const frameMinValues: number[] = []
+    const frameMaxValues: number[] = []
 
     this.xAxisLabel = new Text({
       text: config.xAxisLabel,
@@ -75,7 +74,11 @@ export class BarChart extends Container {
 
     for (const [i, d] of data.entries()) {
       const [min, max] = extent(d, config.getValue)
-      frameValueScales[i] = getValueScale(config.valueScaleType, min, max, config.valueScaleDelta)
+      const safeMin = Number.isFinite(min) ? Number(min) : 0
+      const safeMax = Number.isFinite(max) ? Number(max) : 0
+      frameMinValues[i] = safeMin
+      frameMaxValues[i] = safeMax
+      frameValueScales[i] = getValueScale(config.valueScaleType, safeMin, safeMax, config.valueScaleDelta)
       frameIdSets[i] = new InternSet(d.map(item => item.id))
       if (d.length > 0) {
         let maxStep = d[0].step
@@ -90,9 +93,36 @@ export class BarChart extends Container {
       else {
         frameMaxSteps[i] = undefined
       }
-      const scale = getValueScale(config.valueScaleType, min, max)
-      const ticks = scale.ticks(config.tickNum)
+    }
 
+    const smoothingRadius = Math.max(0, Math.floor(config.valueScaleSmoothing))
+    let smoothedMinValues = frameMinValues.slice()
+    let smoothedMaxValues = frameMaxValues.slice()
+    if (smoothingRadius > 0 && data.length > 1) {
+      smoothedMinValues = Array.from(blur(frameMinValues, smoothingRadius) as Float64Array)
+      smoothedMaxValues = Array.from(blur(frameMaxValues, smoothingRadius) as Float64Array)
+      for (let i = 0; i < data.length; i += 1) {
+        if (Number.isNaN(smoothedMinValues[i])) {
+          smoothedMinValues[i] = frameMinValues[i] ?? 0
+        }
+        if (Number.isNaN(smoothedMaxValues[i])) {
+          smoothedMaxValues[i] = frameMaxValues[i] ?? 0
+        }
+      }
+    }
+    for (let i = 0; i < data.length; i += 1) {
+      const minValue = smoothedMinValues[i] ?? frameMinValues[i] ?? 0
+      const maxValue = smoothedMaxValues[i] ?? frameMaxValues[i] ?? 0
+      frameValueScales[i] = getValueScale(config.valueScaleType, minValue, maxValue, config.valueScaleDelta)
+    }
+
+    const ticksAlphaMap = new Map<number, Array<number>>()
+    const ticksComponentMap = new Map<number, Container>()
+    const tickSet = new InternSet<number>()
+
+    for (const [i] of data.entries()) {
+      const scale = frameValueScales[i]
+      const ticks = scale.ticks(config.tickNum)
       for (const tick of ticks) {
         if (tickSet.has(tick)) {
           const numberList = ticksAlphaMap.get(tick)!
@@ -100,9 +130,7 @@ export class BarChart extends Container {
         }
         else {
           tickSet.add(tick)
-          const numberList: number[] = []
-          numberList.length = data.length
-          numberList.fill(0)
+          const numberList = new Array<number>(data.length).fill(0)
           numberList[i] = 1
           ticksAlphaMap.set(tick, numberList)
           const tickText = new Text({
@@ -362,7 +390,7 @@ export class BarChart extends Container {
       bar.update({
         y: d.blurRank * (config.barHeight + config.barGap),
         label: d.label,
-        width: this.maxBarWidth * valueScale(d.value),
+        width: this.maxBarWidth * Math.max(0, Math.min(valueScale(d.value), 1)),
         alpha: d.alpha,
         color: config.getColor(d),
         valueLabel: config.getValueLabel(d),
