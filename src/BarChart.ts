@@ -145,7 +145,7 @@ export class BarChart extends Container {
 
     // center xAxis
     this.xAxisLabel.anchor.set(0.5, 0)
-    this.xAxisLabel.position.set(config.width / 2, 0)
+    this.xAxisLabel.position.set(0, 0)
     this.xAxisTickContainer.position.set(0, this.tickLabelHeight + this.xAxisLabelPadding)
     this.xAxis.addChild(this.xAxisTickContainer, this.xAxisLabel)
     // tickComp 上面腾出 xAxixLabel 的位置
@@ -159,7 +159,7 @@ export class BarChart extends Container {
         labelMap.set(item.id, item.label)
       }
     }
-    const maxLabelWidth = this.getMaxLabelWidth([...labelMap.values()], config)
+    const maxLabelWidth = config.showLabel ? this.getMaxLabelWidth([...labelMap.values()], config) : 0
 
     const barComponentMap = new Map<string, BarComponent>(idList.map((id) => {
       const imageTexture = idImageMap.get(id)
@@ -177,18 +177,23 @@ export class BarChart extends Container {
         barInfoStyle: config.barInfoStyle,
         image: imgSprite,
         leftLabelWidth: maxLabelWidth,
+        showLabel: config.showLabel,
       })
       return [id, comp]
     }))
     // 设置最大的 label 宽度
     for (const v of barComponentMap.values()) {
       v.settings.leftLabelWidth = maxLabelWidth
+      v.settings.showLabel = config.showLabel
     }
     const maxValueLabelWidth = this.getMaxValueLabelWidth(data, config)
 
-    // 最大柱子宽度 = 设置宽度 - 最大 left label 宽度 - 最大 value label 宽度 - left label padding - value label padding - padding
-    const maxBarWidth = config.width - maxLabelWidth - maxValueLabelWidth - config.leftLabelPadding - config.valueLabelPadding
+    // Determine drawable width after reserving space for labels and padding
+    const axisOffset = config.showLabel ? maxLabelWidth + config.leftLabelPadding : 0
+    const rightReservedWidth = maxValueLabelWidth + config.valueLabelPadding
+    const maxBarWidth = Math.max(config.width - axisOffset - rightReservedWidth, 0)
     this.maxBarWidth = maxBarWidth
+    this.xAxisLabel.position.set(this.maxBarWidth / 2, 0)
 
     const swapFrames = config.swapDurationSec * config.fps
     // 对 ticksAlpha 的每一个 value 执行 blur
@@ -216,8 +221,9 @@ export class BarChart extends Container {
     this.addChild(this.xAxis)
     this.addChild(stepLabel)
     this.addChild(this.barMain)
-    this.barMain.position.set(maxLabelWidth, this.xAxisLabel.height + this.xAxisLabelPadding + this.tickLabelHeight)
-    this.xAxis.position.set(maxLabelWidth + config.leftLabelPadding, 0)
+    const barMainOffsetX = config.showLabel ? maxLabelWidth : 0
+    this.barMain.position.set(barMainOffsetX, this.xAxisLabel.height + this.xAxisLabelPadding + this.tickLabelHeight)
+    this.xAxis.position.set(axisOffset, 0)
     this.barComponentMap = barComponentMap
     this.frameValueScales = frameValueScales
     this.frameIdSets = frameIdSets
@@ -362,6 +368,7 @@ export class BarChart extends Container {
         valueLabel: config.getValueLabel(d),
         extraValueLabel: config.getValueExtra(d),
         barInfo: config.getBarInfo(d, i, idx),
+        showLabel: config.showLabel,
       })
     }
     for (const [id, bar] of this.barComponentMap.entries()) {

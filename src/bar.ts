@@ -28,6 +28,7 @@ interface BarItemSettings {
   image?: Sprite
   tickNumber?: number
   autoBarHeight: boolean
+  showLabel: boolean
 
 }
 
@@ -66,6 +67,7 @@ export class BarComponent extends Container {
       tickNum: 8,
       barInfoStyle: 'default',
       autoBarHeight: true,
+      showLabel: true,
     }
     settings = Object.assign(defaultSettings, settings)
     this.settings = settings as BarItemSettings
@@ -192,6 +194,10 @@ export class BarComponent extends Container {
     const label = this.settings.label
     const valueLabel = this.settings.valueLabel
     const color = this.settings.color
+    const showLabel = this.settings.showLabel ?? true
+
+    leftLabel.renderable = showLabel
+    leftLabel.visible = showLabel
 
     const x = this.settings.x
     const y = this.settings.y
@@ -200,14 +206,18 @@ export class BarComponent extends Container {
     }
 
     if (width !== undefined && height !== undefined) {
-      // 如果没有定义左侧标签宽度，则测量它
-      const leftLabelBounds = leftLabel.getBounds()
-      if (!leftLabelWidth) {
-        leftLabelWidth = leftLabel.width
+      if (showLabel) {
+        const leftLabelBounds = leftLabel.getBounds()
+        if (!leftLabelWidth) {
+          leftLabelWidth = leftLabelBounds.width
+        }
+        leftLabel.position.set(-leftLabelBounds.width, (height - leftLabelBounds.height) / 2)
       }
-
-      leftLabel.position.set(-leftLabelBounds.width, (height - leftLabelBounds.height) / 2)
-      const barX = leftLabelPadding
+      else {
+        leftLabelWidth = 0
+        leftLabel.position.set(0, 0)
+      }
+      const barX = showLabel ? leftLabelPadding : 0
       this.bar.position.set(barX, 0)
       const barWidth = width
 

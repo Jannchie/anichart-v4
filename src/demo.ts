@@ -1,12 +1,31 @@
 /* eslint-disable unicorn/prefer-top-level-await */
 import type { RankedData } from './Data'
+import dayjs from 'dayjs'
 import { Application } from 'pixi.js'
 import { BarChart } from './BarChart'
 import { Config } from './Config'
 import { DataProcessor } from './DataProcessor'
 
 const app = new Application()
-const config = new Config()
+const ratingFormatter = new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 })
+const config = new Config({
+  idField: 'model',
+  labelField: 'model',
+  valueField: 'rating',
+  stepField: 'date',
+  totalDurationSec: 60,
+  colorField: 'company',
+  topN: 16,
+  showLabel: false,
+  showStepLabel: true,
+  valueScaleType: 'from-delta',
+  getStep: d => Number(d.date) * 1000,
+  getStepLabel: step => dayjs(step).format('YYYY-MM-DD'),
+  getValueLabel: data => ratingFormatter.format(data.value),
+  getValueExtra: data => data.raw.company ?? '',
+  getBarInfo: data => data.raw.model ?? data.id,
+  xAxisLabel: 'LLM Elo Rating',
+})
 
 // Prepare base layout
 document.documentElement.style.height = '100%'
@@ -133,7 +152,7 @@ function rebuildChart() {
     return
   }
   if (barChart) {
-    barChart.remove()
+    barChart.removeFromParent()
     barChart.destroy({ children: true })
   }
   barChart = new BarChart(data, config)
@@ -203,7 +222,7 @@ function handleResize() {
 
     window.addEventListener('resize', handleResize)
 
-    data = await DataProcessor.processCSV('/base.csv', config)
+    data = await DataProcessor.processCSV('/llm.csv', config)
     const maxFrame = Math.max(data.length - 1, 0)
     progress.max = maxFrame.toString()
     progress.disabled = data.length === 0

@@ -40,6 +40,7 @@ interface IConfig {
   width: number
   height: number
   showStepLabel: boolean
+  showLabel: boolean
   getStepLabel: (step: number) => string
   borderRadius: number
   tickNum: number
@@ -85,6 +86,7 @@ export class Config {
   width!: number
   height!: number
   showStepLabel: boolean
+  showLabel: boolean
   getStepLabel: (step: number) => string
   borderRadius: number
   tickNum: number
@@ -138,6 +140,7 @@ export class Config {
     this.x = 10
     this.y = 10
     this.showStepLabel = true
+    this.showLabel = true
     this.imageField = 'id'
     this.barInfoStyle = 'default'
     this.getStepLabel = (step: number) => dayjs(step).format('YYYY-MM-DD')
