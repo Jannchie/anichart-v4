@@ -5,9 +5,10 @@ import { Application } from 'pixi.js'
 import { BarChart } from './BarChart'
 import { Config } from './Config'
 import { DataProcessor } from './DataProcessor'
+import { LineChart } from './LineChart'
 
 const app = new Application()
-const ratingFormatter = new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 })
+const ratingFormatter = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 })
 const config = new Config({
   idField: 'model',
   labelField: 'model',
@@ -18,7 +19,7 @@ const config = new Config({
   topN: 16,
   showLabel: false,
   showStepLabel: true,
-  // valueScaleType: 'from-delta',
+  valueScaleType: 'from-delta',
   getStep: d => Number(d.date) * 1000,
   getStepLabel: step => dayjs(step).format('YYYY-MM-DD'),
   getValueLabel: data => ratingFormatter.format(data.value),
@@ -27,6 +28,20 @@ const config = new Config({
   title: 'LLM Elo Rating Leaderboard',
   // xAxisLabel: 'LLM Elo Rating',
 })
+
+type ChartInstance = BarChart | LineChart
+const chartPreferences = {
+  bar: {
+    showLabel: false,
+    title: 'LLM Elo Rating Leaderboard',
+    xAxisLabel: '',
+  },
+  line: {
+    showLabel: true,
+    title: 'LLM Elo Rating Trend',
+    xAxisLabel: 'LLM Elo Rating',
+  },
+} as const
 
 // Prepare base layout
 document.documentElement.style.height = '100%'
@@ -93,6 +108,23 @@ function applyButtonStyle(button: HTMLButtonElement) {
 
 applyButtonStyle(toggleButton)
 
+const chartSelect = document.createElement('select')
+chartSelect.style.padding = '6px 12px'
+chartSelect.style.background = 'rgba(255, 255, 255, 0.12)'
+chartSelect.style.border = '1px solid rgba(255, 255, 255, 0.24)'
+chartSelect.style.borderRadius = '6px'
+chartSelect.style.color = '#ffffff'
+chartSelect.style.fontSize = '14px'
+chartSelect.style.fontFamily = 'inherit'
+chartSelect.style.cursor = 'pointer'
+chartSelect.style.height = '32px'
+
+const barOption = new Option('Bar Chart', 'bar')
+const lineOption = new Option('Line Chart', 'line')
+chartSelect.add(barOption)
+chartSelect.add(lineOption)
+chartSelect.value = 'bar'
+
 const progress = document.createElement('input')
 progress.type = 'range'
 progress.min = '0'
@@ -102,14 +134,15 @@ progress.step = '1'
 progress.style.width = '260px'
 progress.style.cursor = 'pointer'
 
-controls.append(toggleButton, progress)
+controls.append(chartSelect, toggleButton, progress)
 
 let data: RankedData[][] = []
-let barChart: BarChart | null = null
+let chart: ChartInstance | null = null
 let animationFrameId: number | undefined
 let isPaused = false
 let currentFrame = 0
 let resumeAfterScrub = false
+let chartType: 'bar' | 'line' = 'bar'
 
 const clampSize = (value: number) => Math.max(1, Math.floor(value))
 
@@ -139,11 +172,11 @@ function setPauseState(paused: boolean) {
 }
 
 function renderFrame(frame: number) {
-  if (!barChart || data.length === 0) {
+  if (!chart || data.length === 0) {
     return
   }
   const safeFrame = Math.min(Math.max(frame, 0), data.length - 1)
-  barChart.update(safeFrame)
+  chart.update(safeFrame)
   progress.value = safeFrame.toString()
   currentFrame = safeFrame
 }
@@ -152,12 +185,20 @@ function rebuildChart() {
   if (data.length === 0) {
     return
   }
-  if (barChart) {
-    barChart.removeFromParent()
-    barChart.destroy({ children: true })
+  if (chart) {
+    chart.removeFromParent()
+    chart.destroy({ children: true })
   }
-  barChart = new BarChart(data, config)
-  app.stage.addChild(barChart)
+  const preference = chartPreferences[chartType]
+  config.showLabel = preference.showLabel
+  config.title = preference.title
+  config.xAxisLabel = preference.xAxisLabel
+
+  chart = chartType === 'line'
+    ? new LineChart(data, config)
+    : new BarChart(data, config)
+
+  app.stage.addChild(chart)
   renderFrame(currentFrame)
 }
 
@@ -196,6 +237,17 @@ progress.addEventListener('input', () => {
   }
   const nextFrame = Number(progress.value) || 0
   renderFrame(nextFrame)
+})
+
+chartSelect.addEventListener('change', () => {
+  const nextType = chartSelect.value === 'line' ? 'line' : 'bar'
+  if (nextType === chartType && chart) {
+    return
+  }
+  chartType = nextType
+  currentFrame = 0
+  progress.value = '0'
+  rebuildChart()
 })
 
 function handleResize() {

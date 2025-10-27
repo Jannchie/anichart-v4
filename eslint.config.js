@@ -4,4 +4,7 @@ export default jannchie({
   ignores: [
     'playground/public/**',
   ],
+  rules: {
+    'unicorn/no-array-callback-reference': 'off',
+  },
 })
