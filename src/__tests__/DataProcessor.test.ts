@@ -1,5 +1,5 @@
 import type { ScaleLinear } from 'd3'
-import type { Data } from '../Data'
+import type { Data, RankedData } from '../Data'
 import { describe, expect, it } from 'vitest'
 import { Config } from '../Config'
 import { DataProcessor } from '../DataProcessor'
@@ -14,6 +14,14 @@ const getScaleMap = (DataProcessor as any).getScaleMap as (
   startStep: number,
   transitionDurationSec: number,
 ) => Map<string, LinearScale>
+const addTailingFrames = (DataProcessor as any).addTailingFrames as (
+  config: Config,
+  result: RankedData[][],
+) => void
+const preprocess = (DataProcessor as any).preprocess as (
+  rawData: any,
+  config: Config,
+) => Data[]
 
 function createData(id: string, step: number, value: number, overrides: Partial<Data> = {}): Data {
   const base: Data = {
@@ -246,5 +254,58 @@ describe('dataprocessor.fillrank', () => {
     }
     const ids = frame.map(d => d.id)
     expect(ids).not.toContain('gamma')
+  })
+})
+
+describe('dataprocessor.addtailingframes', () => {
+  it('clamps alpha values within valid bounds after smoothing', () => {
+    const config = new Config({ topN: 2, swapDurationSec: 1, fps: 2 })
+    const createRanked = (step: number): RankedData => ({
+      id: 'alpha',
+      label: 'alpha',
+      value: 10,
+      step,
+      alpha: 1,
+      raw: { id: 'alpha', step },
+      up: false,
+      rank: config.topN + 2,
+      blurRank: config.topN + 2,
+    })
+    const result: RankedData[][] = [
+      [createRanked(0)],
+      [createRanked(1)],
+    ]
+
+    addTailingFrames(config, result)
+    const alphas = result.flat().map(d => d.alpha)
+
+    for (const value of alphas) {
+      expect(value).toBeGreaterThanOrEqual(0)
+      expect(value).toBeLessThanOrEqual(1)
+    }
+    expect(alphas).toContain(0)
+  })
+})
+
+describe('dataprocessor.preprocess', () => {
+  it('retains label-like fields as strings even when numeric-looking', () => {
+    const config = new Config({
+      idField: 'id',
+      labelField: 'name',
+      valueField: 'metric',
+      stepField: 'step',
+    })
+    const rawData = [
+      { id: '1', name: '01', metric: '10', step: '0' },
+      { id: '2', name: '02', metric: '9', step: '0' },
+    ]
+
+    const processed = preprocess(rawData as any, config)
+    expect(processed).toHaveLength(2)
+    const entry = processed.find(d => d.id === '1')
+    expect(entry).toBeDefined()
+    expect(entry?.name).toBe('01')
+    expect(typeof entry?.name).toBe('string')
+    expect(entry?.metric).toBe(10)
   })
 })

@@ -112,7 +112,8 @@ export class DataProcessor {
         // 如果 blur rank 在 TopN - 1 ~ TopN 之间，则需要调整 alpha
         // 如果 TopN 是 20，那么 blurRank 在 19 ~ 20 之间的 alpha 为 1 ~ 0，越靠近 20，alpha 越小
         if (d.blurRank >= config.topN - 1) {
-          d.alpha = 1 - (d.blurRank - config.topN + 1)
+          const alpha = 1 - (d.blurRank - config.topN + 1)
+          d.alpha = Math.max(0, Math.min(1, alpha))
         }
         // 还需要检查是否是上升还是下降。
         // 只有当当前blurRank接近整数时才更新up状态，避免移动过程中的层叠跳跃
@@ -143,10 +144,18 @@ export class DataProcessor {
         up: false,
       }
       for (const key in d) {
-        // 值不能是 ID
-        if (d[key] !== result.id // 如果值能被转换成数字，则转换成数字，加入到对象中
-          && !Number.isNaN(Number(d[key]))) {
-          result[key] = Number(d[key]) as any
+        const rawValue = d[key]
+        // Preserve the original label field to avoid unwanted number coercion
+        if (key === config.labelField) {
+          result[key] = rawValue
+          continue
+        }
+        if (rawValue === result.id) {
+          continue
+        }
+        const numericValue = Number(rawValue)
+        if (!Number.isNaN(numericValue)) {
+          result[key] = numericValue as any
         }
       }
       return result

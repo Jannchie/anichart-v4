@@ -211,6 +211,7 @@ export class BarChart extends Container {
     this.stepLabel = stepLabel
     this.position.set(config.x, config.y)
     this.barMain = new Container()
+    this.barMain.sortableChildren = true
     this.barMain.addChild(...barComponentMap.values())
     this.addChild(this.xAxis)
     this.addChild(stepLabel)
