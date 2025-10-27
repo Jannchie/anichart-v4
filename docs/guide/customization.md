@@ -59,6 +59,7 @@ const config = new Config({
 const config = new Config({
   canvasWidth: 1080,
   canvasHeight: 1080,
+  title: 'Global Sales Leaderboard',
   xAxisLabel: 'Global Sales',
   valueScaleType: 'from-min', // from-zero | from-min | from-delta
   valueScaleDelta: 100,
@@ -71,6 +72,7 @@ const config = new Config({
 - `valueScaleType` 与 `valueScaleDelta` 控制 X 轴刻度范围。
 - `barInfoStyle: 'reverse'` 可将图片放在条形左侧，适合展示头像或徽标。
 - `barGap`、`leftLabelPadding` 等参数调节布局细节。
+- `title` adds a centered heading above the stage, useful for distinguishing multiple charts.
 
 ## 渐隐策略
 

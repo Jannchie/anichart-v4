@@ -7,6 +7,8 @@ import { BarComponent, EXTRA_VALUE_LABEL_PADDING } from './bar'
 import { textureMap } from './main'
 
 const LAYER_SETTLE_EPSILON = 0.01
+const TITLE_FONT_SIZE = 36
+const TITLE_PADDING = 24
 
 function getValueScale(type: string, min?: number, max?: number, delta: number = 1000) {
   min = min || 0
@@ -27,6 +29,7 @@ export class BarChart extends Container {
   barComponentMap: Map<string, BarComponent>
   xAxis: Container
   stepLabel: Text
+  titleLabel: Text
   data: RankedData[][]
   config: Config
   ticksAlphaMap: Map<number, number[]>
@@ -72,6 +75,10 @@ export class BarChart extends Container {
       },
     })
 
+    const hasXAxisLabel = Boolean(config.xAxisLabel?.trim())
+    const xAxisLabelPaddingUsed = hasXAxisLabel ? this.xAxisLabelPadding : 0
+    const xAxisLabelHeight = hasXAxisLabel ? this.xAxisLabel.height : 0
+
     for (const [i, d] of data.entries()) {
       const [min, max] = extent(d, config.getValue)
       const safeMin = Number.isFinite(min) ? Number(min) : 0
@@ -96,11 +103,11 @@ export class BarChart extends Container {
     }
 
     const smoothingRadius = Math.max(0, Math.floor(config.valueScaleSmoothing))
-    let smoothedMinValues = frameMinValues.slice()
-    let smoothedMaxValues = frameMaxValues.slice()
+    let smoothedMinValues = [...frameMinValues]
+    let smoothedMaxValues = [...frameMaxValues]
     if (smoothingRadius > 0 && data.length > 1) {
-      smoothedMinValues = Array.from(blur(frameMinValues, smoothingRadius) as Float64Array)
-      smoothedMaxValues = Array.from(blur(frameMaxValues, smoothingRadius) as Float64Array)
+      smoothedMinValues = [...blur(frameMinValues, smoothingRadius) as Float64Array]
+      smoothedMaxValues = [...blur(frameMaxValues, smoothingRadius) as Float64Array]
       for (let i = 0; i < data.length; i += 1) {
         if (Number.isNaN(smoothedMinValues[i])) {
           smoothedMinValues[i] = frameMinValues[i] ?? 0
@@ -130,7 +137,7 @@ export class BarChart extends Container {
         }
         else {
           tickSet.add(tick)
-          const numberList = new Array<number>(data.length).fill(0)
+          const numberList = Array.from<number>({ length: data.length }).fill(0)
           numberList[i] = 1
           ticksAlphaMap.set(tick, numberList)
           const tickText = new Text({
@@ -160,7 +167,7 @@ export class BarChart extends Container {
           const tickLabelHeight = tickBounds.height
           this.tickLabelHeight = tickLabelHeight
           tickLine.moveTo(tickWidth / 2, this.tickLabelHeight)
-          tickLine.lineTo(tickWidth / 2, config.height - this.xAxisLabel.height - this.xAxisLabelPadding)
+          tickLine.lineTo(tickWidth / 2, config.height - xAxisLabelHeight - xAxisLabelPaddingUsed)
           tickLine.stroke()
 
           tickComp.position.set(-tickWidth / 2, 0)
@@ -171,15 +178,32 @@ export class BarChart extends Container {
       }
     }
 
+    const showTitle = Boolean(config.title?.trim())
+    const titleLabel = new Text({
+      text: config.title,
+      style: {
+        fontSize: TITLE_FONT_SIZE,
+        fill: 0xFF_FF_FF,
+        fontFamily: config.fontFamily,
+        fontWeight: 'bold',
+        align: 'center',
+      },
+    })
+    const titleFontSize = typeof titleLabel.style.fontSize === 'number'
+      ? titleLabel.style.fontSize
+      : Number.parseFloat(String(titleLabel.style.fontSize ?? 0)) || 0
+    let titleOffset = showTitle ? Math.max(titleLabel.height, titleFontSize) + TITLE_PADDING : 0
+    this.titleLabel = titleLabel
+
     // center xAxis
     this.xAxisLabel.anchor.set(0.5, 0)
     this.xAxisLabel.position.set(0, 0)
-    this.xAxisTickContainer.position.set(0, this.tickLabelHeight + this.xAxisLabelPadding)
+    this.xAxisTickContainer.position.set(0, xAxisLabelHeight + xAxisLabelPaddingUsed)
     this.xAxis.addChild(this.xAxisTickContainer, this.xAxisLabel)
     // tickComp 上面腾出 xAxixLabel 的位置
     // // 自动重新设置 barHeight
     if (config.autoBarHeight) {
-      config.barHeight = ((config.height - this.tickLabelHeight - this.xAxisLabelPadding - this.xAxisLabel.height) / config.topN) - config.barGap
+      config.barHeight = ((config.height - titleOffset - this.tickLabelHeight - xAxisLabelPaddingUsed - xAxisLabelHeight) / config.topN) - config.barGap
     }
     const labelMap = new Map<string, string>()
     for (const item of data.flat()) {
@@ -222,6 +246,14 @@ export class BarChart extends Container {
     const maxBarWidth = Math.max(config.width - axisOffset - rightReservedWidth, 0)
     this.maxBarWidth = maxBarWidth
     this.xAxisLabel.position.set(this.maxBarWidth / 2, 0)
+    this.xAxisLabel.visible = hasXAxisLabel
+    this.xAxisLabel.renderable = hasXAxisLabel
+
+    titleOffset = showTitle ? Math.max(titleLabel.height, titleFontSize) + TITLE_PADDING : 0
+    titleLabel.anchor.set(0.5, 0)
+    titleLabel.position.set(config.width / 2, 0)
+    titleLabel.visible = showTitle
+    titleLabel.renderable = showTitle
 
     const swapFrames = config.swapDurationSec * config.fps
     // 对 ticksAlpha 的每一个 value 执行 blur
@@ -246,12 +278,14 @@ export class BarChart extends Container {
     this.barMain = new Container()
     this.barMain.sortableChildren = true
     this.barMain.addChild(...barComponentMap.values())
+    this.addChild(titleLabel)
     this.addChild(this.xAxis)
     this.addChild(stepLabel)
     this.addChild(this.barMain)
     const barMainOffsetX = config.showLabel ? maxLabelWidth : 0
-    this.barMain.position.set(barMainOffsetX, this.xAxisLabel.height + this.xAxisLabelPadding + this.tickLabelHeight)
-    this.xAxis.position.set(axisOffset, 0)
+    const barMainOffsetY = titleOffset + xAxisLabelHeight + xAxisLabelPaddingUsed + this.tickLabelHeight
+    this.barMain.position.set(barMainOffsetX, barMainOffsetY)
+    this.xAxis.position.set(axisOffset, titleOffset)
     this.barComponentMap = barComponentMap
     this.frameValueScales = frameValueScales
     this.frameIdSets = frameIdSets

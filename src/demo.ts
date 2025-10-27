@@ -18,13 +18,14 @@ const config = new Config({
   topN: 16,
   showLabel: false,
   showStepLabel: true,
-  valueScaleType: 'from-delta',
+  // valueScaleType: 'from-delta',
   getStep: d => Number(d.date) * 1000,
   getStepLabel: step => dayjs(step).format('YYYY-MM-DD'),
   getValueLabel: data => ratingFormatter.format(data.value),
   getValueExtra: data => data.raw.company ?? '',
   getBarInfo: data => data.raw.model ?? data.id,
-  xAxisLabel: 'LLM Elo Rating',
+  title: 'LLM Elo Rating Leaderboard',
+  // xAxisLabel: 'LLM Elo Rating',
 })
 
 // Prepare base layout

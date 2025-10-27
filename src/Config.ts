@@ -48,6 +48,7 @@ interface IConfig {
   imageField: string
   barInfoStyle: 'default' | 'reverse'
   xAxisLabel: string
+  title: string
 }
 
 export class Config {
@@ -95,6 +96,7 @@ export class Config {
   valueScaleDelta: number
   getValueExtra: (_: Data) => string
   xAxisLabel: string
+  title: string
   barInfoPadding: number
   constructor(config: Partial<IConfig> = {}) {
     this.getID = (d: any) => d[this.idField]
@@ -151,6 +153,7 @@ export class Config {
     this.fontFamily = 'Sarasa Mono SC'
     this.tickNum = 8
     this.xAxisLabel = ''
+    this.title = ''
     const widthProvided = Object.prototype.hasOwnProperty.call(config, 'width')
     const heightProvided = Object.prototype.hasOwnProperty.call(config, 'height')
     const valueScaleSmoothingProvided = Object.prototype.hasOwnProperty.call(config, 'valueScaleSmoothing')

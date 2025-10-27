@@ -20,6 +20,7 @@ const config = new Config({
 - `width`, `height`：图表可用区域，若未显式提供，则在构造函数内基于画布尺寸推导。
 - `barGap` / `barHeight` / `autoBarHeight`：条目间距与高度控制，`autoBarHeight` 为 `true` 时会根据 `topN` 自动计算。
 - `barInfoStyle`：`'default' | 'reverse'`，决定条内文本与图片的排列方式。
+- `title`: Chart title text rendered at the centered top of the layout.
 
 ## 排名与动画
 
