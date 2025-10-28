@@ -28,17 +28,39 @@ function clamp01(value: number) {
   return clamp(value, 0, 1)
 }
 
+function ensureRange(minValue: number, maxValue: number) {
+  if (!Number.isFinite(minValue)) {
+    minValue = 0
+  }
+  if (!Number.isFinite(maxValue)) {
+    maxValue = 1
+  }
+  if (minValue === maxValue) {
+    const offset = minValue === 0 ? 1 : Math.abs(minValue) * 0.01 || 1
+    return [minValue - offset, maxValue + offset] as const
+  }
+  if (minValue > maxValue) {
+    return [maxValue, minValue] as const
+  }
+  return [minValue, maxValue] as const
+}
+
 function getValueScale(type: ValueScaleType, min?: number, max?: number, delta: number = 1000) {
-  const safeMin = min ?? 0
-  const safeMax = max ?? 1
+  let safeMin = min ?? 0
+  let safeMax = max ?? 1
+  ;[safeMin, safeMax] = ensureRange(safeMin, safeMax)
   if (type === 'from-zero') {
-    return scaleLinear().domain([0, safeMax]).range([0, 1])
+    const zeroBase = Math.min(0, safeMin)
+    return scaleLinear().domain([zeroBase, safeMax]).range([0, 1])
   }
   if (type === 'from-min') {
-    return scaleLinear().domain([safeMin - (safeMax - safeMin), safeMax]).range([0, 1])
+    const span = safeMax - safeMin
+    return scaleLinear().domain([safeMin - span, safeMax]).range([0, 1])
   }
   if (type === 'from-delta') {
-    return scaleLinear().domain([safeMax - delta, safeMax]).range([0, 1])
+    const baseMin = safeMax - delta
+    const domainMin = Math.min(baseMin, safeMin)
+    return scaleLinear().domain([domainMin, safeMax]).range([0, 1])
   }
   throw new Error('Unknown value scale type')
 }
@@ -50,6 +72,9 @@ class LineSeries extends Container {
   private readonly color: number
   private readonly labelText: string
   private readonly points: SeriesPoint[]
+  private readonly activePointBuffer: SeriesPoint[] = []
+  private readonly xBuffer: number[] = []
+  private readonly yBuffer: number[] = []
 
   constructor(options: { points: SeriesPoint[], color: number, label: string, fontFamily: string }) {
     super()
@@ -69,6 +94,10 @@ class LineSeries extends Container {
     })
     this.labelNode.anchor.set(0, 0.5)
 
+    this.marker.circle(0, 0, 5).fill({ color: this.color, alpha: 0.9 })
+    this.marker.visible = false
+    this.marker.renderable = false
+
     this.addChild(this.line, this.marker, this.labelNode)
   }
 
@@ -81,16 +110,39 @@ class LineSeries extends Container {
   ) {
     const { showLabel, topN, plotWidth } = options
 
-    const activePoints = this.points
-      .filter(point => point.frameIndex <= frameIndex && point.data.alpha > 0)
-      .toSorted((a, b) => a.frameIndex - b.frameIndex)
+    let activeCount = 0
+    for (const point of this.points) {
+      if (point.frameIndex > frameIndex) {
+        break
+      }
+      if (point.data.alpha <= 0) {
+        continue
+      }
+      const rawX = getX(point)
+      const x = clamp(rawX, 0, plotWidth)
+      const valueRatio = clamp01(valueScale(point.data.value))
+      const y = plotHeight * (1 - valueRatio)
+      this.activePointBuffer[activeCount] = point
+      this.xBuffer[activeCount] = x
+      this.yBuffer[activeCount] = y
+      activeCount += 1
+    }
+    this.activePointBuffer.length = activeCount
+    this.xBuffer.length = activeCount
+    this.yBuffer.length = activeCount
 
-    if (activePoints.length === 0) {
+    if (activeCount === 0) {
       this.renderable = false
+      this.marker.visible = false
+      this.marker.renderable = false
+      this.labelNode.visible = false
+      this.labelNode.renderable = false
       return
     }
 
     this.renderable = true
+    this.marker.visible = true
+    this.marker.renderable = true
     this.line.clear()
     this.line.setStrokeStyle({
       width: 3,
@@ -100,56 +152,48 @@ class LineSeries extends Container {
       alpha: 0.9,
     })
 
-    const positions: Array<{ x: number, y: number, point: SeriesPoint }> = []
-    for (const point of activePoints) {
-      const rawX = getX(point)
-      const x = clamp(rawX, 0, plotWidth)
-      const valueRatio = clamp01(valueScale(point.data.value))
-      const y = plotHeight * (1 - valueRatio)
-      positions.push({ x, y, point })
+    const firstX = this.xBuffer[0]
+    const firstY = this.yBuffer[0]
+    if (activeCount === 1) {
+      this.line.moveTo(firstX, firstY)
     }
-
-    if (positions.length === 1) {
-      const only = positions[0]
-      this.line.moveTo(only.x, only.y)
-    }
-    else if (positions.length > 1) {
-      this.line.moveTo(positions[0].x, positions[0].y)
-      for (let i = 0; i < positions.length - 1; i += 1) {
-        const current = positions[i]
-        const next = positions[i + 1]
-        if (i === positions.length - 2) {
-          this.line.quadraticCurveTo(current.x, current.y, next.x, next.y)
+    else {
+      this.line.moveTo(firstX, firstY)
+      for (let i = 0; i < activeCount - 1; i += 1) {
+        const currentX = this.xBuffer[i]
+        const currentY = this.yBuffer[i]
+        const nextX = this.xBuffer[i + 1]
+        const nextY = this.yBuffer[i + 1]
+        if (i === activeCount - 2) {
+          this.line.quadraticCurveTo(currentX, currentY, nextX, nextY)
         }
         else {
-          const midX = (current.x + next.x) / 2
-          const midY = (current.y + next.y) / 2
-          this.line.quadraticCurveTo(current.x, current.y, midX, midY)
+          const midX = (currentX + nextX) / 2
+          const midY = (currentY + nextY) / 2
+          this.line.quadraticCurveTo(currentX, currentY, midX, midY)
         }
       }
     }
     this.line.stroke()
 
-    const lastPosition = positions.at(-1)!
-    const seriesAlpha = clamp01(lastPosition.point.data.alpha)
+    const lastIndex = activeCount - 1
+    const lastPoint = this.activePointBuffer[lastIndex]
+    const lastX = this.xBuffer[lastIndex]
+    const lastY = this.yBuffer[lastIndex]
+    const seriesAlpha = clamp01(lastPoint.data.alpha)
     this.alpha = seriesAlpha
 
-    this.marker.clear()
-    this.marker.beginFill(this.color, 0.9)
-    this.marker.drawCircle(0, 0, 5)
-    this.marker.endFill()
-    this.marker.position.set(lastPosition.x, lastPosition.y)
+    this.marker.position.set(lastX, lastY)
 
-    this.labelNode.text = this.labelText
     this.labelNode.visible = showLabel
     this.labelNode.renderable = showLabel
     if (showLabel) {
       const labelOffset = 8
-      const labelX = clamp(lastPosition.x + labelOffset, 0, Math.max(plotWidth - this.labelNode.width, 0))
-      this.labelNode.position.set(labelX, lastPosition.y)
+      const labelX = clamp(lastX + labelOffset, 0, Math.max(plotWidth - this.labelNode.width, 0))
+      this.labelNode.position.set(labelX, lastY)
     }
 
-    this.zIndex = Math.round((topN - lastPosition.point.data.blurRank) * 100)
+    this.zIndex = Math.round((topN - lastPoint.data.blurRank) * 100)
   }
 }
 
@@ -369,6 +413,10 @@ export class LineChart extends Container {
   private collectFrameStats() {
     const frameMinValues: number[] = []
     const frameMaxValues: number[] = []
+    const runningMinValues: number[] = []
+    const runningMaxValues: number[] = []
+    let cumulativeMin = Number.POSITIVE_INFINITY
+    let cumulativeMax = Number.NEGATIVE_INFINITY
 
     for (const [frameIndex, frame] of this.data.entries()) {
       const [min, max] = extent(frame, this.config.getValue)
@@ -376,6 +424,16 @@ export class LineChart extends Container {
       const safeMax = Number.isFinite(max) ? Number(max) : 0
       frameMinValues[frameIndex] = safeMin
       frameMaxValues[frameIndex] = safeMax
+      if (frameIndex === 0) {
+        cumulativeMin = safeMin
+        cumulativeMax = safeMax
+      }
+      else {
+        cumulativeMin = Math.min(cumulativeMin, safeMin)
+        cumulativeMax = Math.max(cumulativeMax, safeMax)
+      }
+      runningMinValues[frameIndex] = cumulativeMin
+      runningMaxValues[frameIndex] = cumulativeMax
       this.frameValueScales[frameIndex] = getValueScale(this.config.valueScaleType, safeMin, safeMax, this.config.valueScaleDelta)
       this.frameIdSets[frameIndex] = new InternSet(frame.map(item => item.id))
       if (frame.length > 0) {
@@ -408,8 +466,13 @@ export class LineChart extends Container {
       }
     }
     for (let i = 0; i < this.data.length; i += 1) {
-      const minValue = smoothedMinValues[i] ?? frameMinValues[i] ?? 0
-      const maxValue = smoothedMaxValues[i] ?? frameMaxValues[i] ?? 0
+      const smoothedMin = smoothedMinValues[i] ?? frameMinValues[i] ?? 0
+      const smoothedMax = smoothedMaxValues[i] ?? frameMaxValues[i] ?? 0
+      const cumulativeMinValue = runningMinValues[i] ?? smoothedMin
+      const cumulativeMaxValue = runningMaxValues[i] ?? smoothedMax
+      const domainMin = Math.min(smoothedMin, cumulativeMinValue)
+      const domainMax = Math.max(smoothedMax, cumulativeMaxValue)
+      const [minValue, maxValue] = ensureRange(domainMin, domainMax)
       this.frameValueScales[i] = getValueScale(this.config.valueScaleType, minValue, maxValue, this.config.valueScaleDelta)
     }
   }
@@ -483,6 +546,7 @@ export class LineChart extends Container {
     }
 
     for (const [id, points] of seriesPointsMap.entries()) {
+      points.sort((a, b) => a.frameIndex - b.frameIndex)
       const firstPoint = points[0]
       const sample = firstPoint?.data
       if (!sample) {

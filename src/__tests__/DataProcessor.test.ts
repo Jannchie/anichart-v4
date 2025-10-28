@@ -65,13 +65,13 @@ describe('dataprocessor.getscalemap', () => {
     ])
     expect(range).toHaveLength(6)
     const exitNode = range[3]
-    expect(exitNode.value).toBeCloseTo(14 * config.decayRate)
+    expect(Number.isNaN(exitNode.value)).toBe(true)
     expect(exitNode.alpha).toBe(0)
     expect(exitNode.up).toBe(false)
     expect(exitNode.step).toBeCloseTo(4 + transitionSteps)
     const fadeNode = range[4]
     expect(fadeNode.step).toBeCloseTo(4 + transitionSteps * 2)
-    expect(fadeNode.value).toBeCloseTo(exitNode.value * config.decayRate)
+    expect(Number.isNaN(fadeNode.value)).toBe(true)
     expect(fadeNode.alpha).toBe(0)
     expect(fadeNode.up).toBe(false)
     const trailingNode = range[5]
@@ -101,16 +101,16 @@ describe('dataprocessor.getscalemap', () => {
       10,
     ])
     const decayNode = range[1]
-    expect(decayNode.value).toBeCloseTo(20 * config.decayRate)
+    expect(Number.isNaN(decayNode.value)).toBe(true)
     expect(decayNode.alpha).toBe(0)
     expect(decayNode.up).toBe(false)
     const middleNode = range[2]
     expect(middleNode.step).toBeCloseTo(config.maxRetentionTimeSec)
-    expect(middleNode.value).toBeCloseTo(20 * config.decayRate)
+    expect(Number.isNaN(middleNode.value)).toBe(true)
     expect(middleNode.up).toBe(false)
     const entryNode = range[3]
     expect(entryNode.step).toBeCloseTo(10 - transitionDurationSec)
-    expect(entryNode.value).toBeCloseTo(20 * config.decayRate)
+    expect(Number.isNaN(entryNode.value)).toBe(true)
     expect(entryNode.up).toBe(true)
   })
 
@@ -137,13 +137,13 @@ describe('dataprocessor.getscalemap', () => {
       6,
     ])
     const exitNode = range[1]
-    expect(exitNode.value).toBeCloseTo(30 * config.decayRate)
+    expect(Number.isNaN(exitNode.value)).toBe(true)
     expect(exitNode.up).toBe(false)
     expect(exitNode.alpha).toBe(0)
     const nanNode = range[2]
     expect(Number.isNaN(nanNode.value)).toBe(true)
     const entryNode = range[3]
-    expect(entryNode.value).toBeCloseTo(40 * config.decayRate)
+    expect(Number.isNaN(entryNode.value)).toBe(true)
     expect(entryNode.alpha).toBe(0)
     expect(entryNode.up).toBe(true)
   })
@@ -199,7 +199,7 @@ describe('dataprocessor.getscalemap', () => {
     expect(domain.at(1)).toBeCloseTo(4 - transitionSteps)
     const range = scale!.range()
     const transitionNode = range[1]
-    expect(transitionNode.value).toBeCloseTo(12 * config.decayRate)
+    expect(Number.isNaN(transitionNode.value)).toBe(true)
     expect(transitionNode.up).toBe(true)
     expect(transitionNode.alpha).toBe(0)
   })

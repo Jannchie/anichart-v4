@@ -185,6 +185,12 @@ export class DataProcessor {
     const transitionSteps = transitionDurationSec / stepSec
     const retentionSteps = config.maxRetentionTimeSec / stepSec
     const decayRate = config.decayRate
+    const decayValue = (value: number) => {
+      if (Number.isNaN(decayRate)) {
+        return Number.NaN
+      }
+      return value * decayRate
+    }
     const createNode = (source: Data, overrides: Partial<Data>): Data => ({
       id: source.id,
       label: source.label,
@@ -193,6 +199,8 @@ export class DataProcessor {
       raw: overrides.raw ?? source.raw,
       alpha: overrides.alpha ?? source.alpha ?? 0,
       up: overrides.up ?? source.up ?? false,
+      placeholder: overrides.placeholder ?? (source as any).placeholder ?? false,
+      skipNaNBridge: overrides.skipNaNBridge ?? (source as any).skipNaNBridge ?? false,
     })
 
     for (const [key, originalGroup] of idGroups.entries()) {
@@ -205,16 +213,20 @@ export class DataProcessor {
       if ((endStep - last.step) * stepSec > config.maxRetentionTimeSec) {
         baseSequence.push(
           createNode(last, {
-            value: last.value * decayRate,
+            value: decayValue(last.value),
             step: last.step + transitionSteps, // 退出动画的终点
             alpha: 0,
             up: false,
+            placeholder: true,
+            skipNaNBridge: true,
           }),
           createNode(last, {
             value: Number.NaN,
             step: endStep, // 最后一个时间戳
             alpha: 0,
             up: false,
+            placeholder: true,
+            skipNaNBridge: false,
           }),
         )
       }
@@ -226,46 +238,56 @@ export class DataProcessor {
         if ((curStep - prevStep) * stepSec > config.maxRetentionTimeSec) {
           expanded.push(
             createNode(cur, {
-              value: cur.value * decayRate,
+              value: decayValue(cur.value),
               step: prevStep + transitionSteps,
               alpha: 0,
               up: false,
+              placeholder: true,
+              skipNaNBridge: true,
             }),
             createNode(cur, {
-              value: cur.value * decayRate,
+              value: decayValue(cur.value),
               step: prevStep + retentionSteps,
               alpha: 0,
               up: false,
+              placeholder: true,
+              skipNaNBridge: true,
             }),
             createNode(cur, {
-              value: cur.value * decayRate,
+              value: decayValue(cur.value),
               step: curStep - transitionSteps,
               alpha: 0,
               up: true,
+              placeholder: true,
+              skipNaNBridge: true,
             }),
           )
         }
         // 如果 cur 的值是 NaN，则前后点需要加过渡元素
-        if (Number.isNaN(cur.value)) {
+        if (Number.isNaN(cur.value) && !(cur as any).skipNaNBridge) {
           const prev = expanded.at(-1)
-          if (prev && !Number.isNaN(prev.value)) {
+          if (prev) {
             expanded.push(createNode(prev, {
-              value: prev.value * decayRate,
+              value: decayValue(prev.value),
               step: prev.step + transitionSteps,
               alpha: 0,
               up: false,
+              placeholder: true,
+              skipNaNBridge: true,
             }))
           }
         }
         expanded.push(cur)
-        if (Number.isNaN(cur.value)) {
+        if (Number.isNaN(cur.value) && !(cur as any).skipNaNBridge) {
           const next = baseSequence[i + 1]
           if (next && !Number.isNaN(next.value)) {
             expanded.push(createNode(next, {
-              value: next.value * decayRate,
+              value: decayValue(next.value),
               step: next.step - transitionSteps,
               alpha: 0,
               up: true,
+              placeholder: true,
+              skipNaNBridge: true,
             }))
           }
         }
