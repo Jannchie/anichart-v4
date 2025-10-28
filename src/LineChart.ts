@@ -1,5 +1,5 @@
 import type { ScaleLinear } from 'd3'
-import type { Config } from './Config'
+import type { Config, ValueScaleType } from './Config'
 import type { RankedData } from './Data'
 import { blur, extent, InternSet, scaleLinear } from 'd3'
 import { CanvasTextMetrics, Container, Graphics, Text } from 'pixi.js'
@@ -28,7 +28,7 @@ function clamp01(value: number) {
   return clamp(value, 0, 1)
 }
 
-function getValueScale(type: string, min?: number, max?: number, delta: number = 1000) {
+function getValueScale(type: ValueScaleType, min?: number, max?: number, delta: number = 1000) {
   const safeMin = min ?? 0
   const safeMax = max ?? 1
   if (type === 'from-zero') {

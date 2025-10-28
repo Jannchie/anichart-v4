@@ -74,18 +74,16 @@ const config = new Config({
 - `barGap`、`leftLabelPadding` 等参数调节布局细节。
 - `title` adds a centered heading above the stage, useful for distinguishing multiple charts.
 
-## 渐隐策略
+## 保留时间与过渡
 
 ```ts
 const config = new Config({
   maxRetentionTimeSec: 4,
-  decayRate: 0.5,
   transitionDurationSec: 0.4,
 })
 ```
 
 - `maxRetentionTimeSec`：条目离开排名后仍停留的最长时间。
-- `decayRate`：离开时数值衰减比例，用于制造衰落感。
 - `transitionDurationSec`：退场动画时长，会自动限制在 `maxRetentionTimeSec / 2` 以内。
 
 更多配置项的完整说明，请查看 [Config API](/reference/config)。当需要高级效果（如叠加 SVG、混合 Pixi 组件）时，可自定义容器并重用 `BarChart` 的更新逻辑。

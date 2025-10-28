@@ -1,5 +1,5 @@
 import type { ScaleLinear } from 'd3'
-import type { Config } from './Config'
+import type { Config, ValueScaleType } from './Config'
 import type { RankedData } from './Data'
 import { blur, extent, InternSet, scaleLinear } from 'd3'
 import { CanvasTextMetrics, Container, Graphics, Sprite, Text, TextStyle } from 'pixi.js'
@@ -10,7 +10,7 @@ const LAYER_SETTLE_EPSILON = 0.01
 const TITLE_FONT_SIZE = 36
 const TITLE_PADDING = 24
 
-function getValueScale(type: string, min?: number, max?: number, delta: number = 1000) {
+function getValueScale(type: ValueScaleType, min?: number, max?: number, delta: number = 1000) {
   min = min || 0
   max = max || 1
   if (type === 'from-zero') {

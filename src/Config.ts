@@ -2,6 +2,8 @@ import type { Data } from './Data'
 import dayjs from 'dayjs'
 import { colorMap, colors } from './main'
 
+export type ValueScaleType = 'from-zero' | 'from-min' | 'from-delta'
+
 interface IConfig {
   canvasWidth: number
   canvasHeight: number
@@ -31,7 +33,7 @@ interface IConfig {
   barInfoPadding: number
   autoBarHeight: boolean
   barHeight: number
-  valueScaleType: string
+  valueScaleType: ValueScaleType
   valueScaleDelta: number
   valueScaleSmoothing: number
   leftLabelPadding: number
@@ -80,7 +82,7 @@ export class Config {
   barGap: number
   barHeight: number
   autoBarHeight: boolean = true
-  valueScaleType: string
+  valueScaleType: ValueScaleType
   valueScaleSmoothing: number
   leftLabelPadding: number
   valueLabelPadding: number
@@ -128,7 +130,7 @@ export class Config {
     this.getValueExtra = (_: Data) => ''
     this.getBarInfo = (d: any) => d.id
     this.maxRetentionTimeSec = 5
-    this.decayRate = 0.6
+    this.decayRate = 0
     this.transitionDurationSec = 0.5
     this.totalDurationSec = 10
     this.barInfoPadding = 10

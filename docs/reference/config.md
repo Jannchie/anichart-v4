@@ -30,7 +30,6 @@ const config = new Config({
 - `swapDurationSec`：条目交换时的动画时长。
 - `maxRetentionTimeSec`：条目退出排名后仍保留的时间。
 - `transitionDurationSec`：退场动画时长，会自动限制在 `maxRetentionTimeSec / 2` 内。
-- `decayRate`：条目退出时的数值衰减比例。
 
 ## 数值刻度
 
