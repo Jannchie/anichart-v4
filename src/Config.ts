@@ -152,7 +152,7 @@ export class Config {
     this.barInfoStyle = 'default'
     this.getStepLabel = (step: number) => dayjs(step).format('YYYY-MM-DD')
     this.borderRadius = 4
-    this.fontFamily = 'Sarasa Mono SC'
+    this.fontFamily = 'Berkeley Mono'
     this.tickNum = 8
     this.xAxisLabel = ''
     this.title = ''

@@ -55,7 +55,7 @@ document.body.style.backgroundColor = '#111111'
 document.body.style.display = 'flex'
 document.body.style.alignItems = 'stretch'
 document.body.style.justifyContent = 'flex-start'
-document.body.style.fontFamily = 'Inter, system-ui, sans-serif'
+document.body.style.fontFamily = 'Berkeley Mono, monospace'
 document.body.style.color = '#ffffff'
 
 const root = document.createElement('div')

@@ -44,6 +44,13 @@ export class BarComponent extends Container {
   barItem: Graphics
   extraValueLabel: BitmapText
   valueContainer: Container
+  private lastLabelText = ''
+  private lastLabelWidth = 0
+  private lastLabelHeight = 0
+  private lastBarWidth = -1
+  private lastBarHeight = -1
+  private lastBarColor = Number.NaN
+  private lastBarRadius = -1
   constructor(settings: Partial<BarItemSettings> = {}) {
     super()
     const defaultSettings = {
@@ -54,7 +61,7 @@ export class BarComponent extends Container {
       label: 'Label',
       barInfo: '',
       color: 0x15_15_15,
-      fontFamily: 'Sarasa Mono SC',
+      fontFamily: 'Berkeley Mono',
       fontSize: 20,
       colorLabel: 0xFF_FF_FF,
       colorBarInfo: 0xFF_FF_FF,
@@ -201,17 +208,27 @@ export class BarComponent extends Container {
 
     const x = this.settings.x
     const y = this.settings.y
+    const nextLabel = label ?? ''
+    let labelChanged = false
     if (label !== undefined) {
-      leftLabel.text = label
+      if (nextLabel !== this.lastLabelText) {
+        leftLabel.text = nextLabel
+        this.lastLabelText = nextLabel
+        labelChanged = true
+      }
     }
 
     if (width !== undefined && height !== undefined) {
       if (showLabel) {
-        const leftLabelBounds = leftLabel.getBounds()
-        if (!leftLabelWidth) {
-          leftLabelWidth = leftLabelBounds.width
+        if (labelChanged || this.lastLabelWidth === 0 || this.lastLabelHeight === 0) {
+          const bounds = leftLabel.getBounds()
+          this.lastLabelWidth = bounds.width
+          this.lastLabelHeight = bounds.height
         }
-        leftLabel.position.set(-leftLabelBounds.width, (height - leftLabelBounds.height) / 2)
+        if (!leftLabelWidth) {
+          leftLabelWidth = this.lastLabelWidth
+        }
+        leftLabel.position.set(-this.lastLabelWidth, (height - this.lastLabelHeight) / 2)
       }
       else {
         leftLabelWidth = 0
@@ -220,24 +237,36 @@ export class BarComponent extends Container {
       const barX = showLabel ? leftLabelPadding : 0
       this.bar.position.set(barX, 0)
       const barWidth = width
+      const radius = this.settings.radius ?? 0
+      const shouldRedraw = barWidth !== this.lastBarWidth
+        || height !== this.lastBarHeight
+        || color !== this.lastBarColor
+        || radius !== this.lastBarRadius
 
-      barItemMask.clear()
-      if (this.settings.radius) {
-        barItemMask.roundRect(0, 0, barWidth, height, this.settings.radius)
-      }
-      else {
-        barItemMask.rect(0, 0, barWidth, height)
-      }
-      barItemMask.fill(color)
+      if (shouldRedraw) {
+        barItemMask.clear()
+        if (radius) {
+          barItemMask.roundRect(0, 0, barWidth, height, radius)
+        }
+        else {
+          barItemMask.rect(0, 0, barWidth, height)
+        }
+        barItemMask.fill(color)
 
-      barItem.clear()
-      if (this.settings.radius) {
-        barItem.roundRect(0, 0, barWidth, height, this.settings.radius)
+        barItem.clear()
+        if (radius) {
+          barItem.roundRect(0, 0, barWidth, height, radius)
+        }
+        else {
+          barItem.rect(0, 0, barWidth, height)
+        }
+        barItem.fill(color)
+
+        this.lastBarWidth = barWidth
+        this.lastBarHeight = height
+        this.lastBarColor = color
+        this.lastBarRadius = radius
       }
-      else {
-        barItem.rect(0, 0, barWidth, height)
-      }
-      barItem.fill(color)
     }
     this.valueLabel.text = valueLabel
     this.valueLabel.position.set(width + valueLabelPadding, (height - this.valueLabel.height) / 2)

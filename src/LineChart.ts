@@ -72,13 +72,15 @@ class LineSeries extends Container {
   private readonly color: number
   private readonly labelText: string
   private readonly points: SeriesPoint[]
+  private readonly frameIndices: number[]
   private readonly activePointBuffer: SeriesPoint[] = []
   private readonly xBuffer: number[] = []
   private readonly yBuffer: number[] = []
 
   constructor(options: { points: SeriesPoint[], color: number, label: string, fontFamily: string }) {
     super()
-    this.points = options.points
+    this.points = options.points.filter(point => point.data.alpha > 0)
+    this.frameIndices = this.points.map(point => point.frameIndex)
     this.color = options.color
     this.labelText = options.label
 
@@ -101,6 +103,23 @@ class LineSeries extends Container {
     this.addChild(this.line, this.marker, this.labelNode)
   }
 
+  private findLastActiveIndex(frameIndex: number) {
+    let low = 0
+    let high = this.frameIndices.length - 1
+    let result = -1
+    while (low <= high) {
+      const mid = (low + high) >> 1
+      if (this.frameIndices[mid] <= frameIndex) {
+        result = mid
+        low = mid + 1
+      }
+      else {
+        high = mid - 1
+      }
+    }
+    return result
+  }
+
   update(
     frameIndex: number,
     getX: (point: SeriesPoint) => number,
@@ -110,22 +129,17 @@ class LineSeries extends Container {
   ) {
     const { showLabel, topN, plotWidth } = options
 
-    let activeCount = 0
-    for (const point of this.points) {
-      if (point.frameIndex > frameIndex) {
-        break
-      }
-      if (point.data.alpha <= 0) {
-        continue
-      }
+    const lastActiveIndex = this.findLastActiveIndex(frameIndex)
+    const activeCount = lastActiveIndex + 1
+    for (let i = 0; i <= lastActiveIndex; i += 1) {
+      const point = this.points[i]
       const rawX = getX(point)
       const x = clamp(rawX, 0, plotWidth)
       const valueRatio = clamp01(valueScale(point.data.value))
       const y = plotHeight * (1 - valueRatio)
-      this.activePointBuffer[activeCount] = point
-      this.xBuffer[activeCount] = x
-      this.yBuffer[activeCount] = y
-      activeCount += 1
+      this.activePointBuffer[i] = point
+      this.xBuffer[i] = x
+      this.yBuffer[i] = y
     }
     this.activePointBuffer.length = activeCount
     this.xBuffer.length = activeCount
