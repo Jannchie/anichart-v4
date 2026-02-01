@@ -1,29 +1,17 @@
 import type { ScaleLinear } from 'd3'
-import type { Config, ValueScaleType } from './Config'
+import type { Config } from './Config'
 import type { RankedData } from './Data'
-import { blur, extent, InternSet, scaleLinear } from 'd3'
-import { CanvasTextMetrics, Container, Graphics, Sprite, Text, TextStyle } from 'pixi.js'
+import { blur, extent, InternSet } from 'd3'
+import { Container, Graphics, Sprite, Text, TextStyle } from 'pixi.js'
 import { BarComponent, EXTRA_VALUE_LABEL_PADDING } from './bar'
-import { textureMap } from './main'
+import { textureMap } from './resources'
+import { getValueScale } from './utils/scale'
+import { measureTextWidth } from './utils/textMetrics'
 
 const LAYER_SETTLE_EPSILON = 0.01
 const TITLE_FONT_SIZE = 36
 const TITLE_PADDING = 24
 
-function getValueScale(type: ValueScaleType, min?: number, max?: number, delta: number = 1000) {
-  min = min || 0
-  max = max || 1
-  if (type === 'from-zero') {
-    return scaleLinear().domain([0, max]).range([0, 1])
-  }
-  if (type === 'from-min') {
-    return scaleLinear().domain([min - (max - min), max]).range([0, 1])
-  }
-  if (type === 'from-delta') {
-    return scaleLinear().domain([max - delta, max]).range([0, 1])
-  }
-  throw new Error('Unknown value scale type')
-}
 export class BarChart extends Container {
   maxBarWidth: number
   barComponentMap: Map<string, BarComponent>
@@ -311,7 +299,7 @@ export class BarChart extends Container {
     let maxLabelWidth = 0
     // 计算最大的 label 宽度
     for (const label of labels) {
-      const width = this.measureTextWidth(label ?? '', style)
+      const width = measureTextWidth(label ?? '', style, this.textWidthCache)
       maxLabelWidth = Math.max(maxLabelWidth, width)
     }
     return maxLabelWidth
@@ -338,8 +326,8 @@ export class BarChart extends Container {
       const extraLabel = config.getValueExtra(item)
       const valueText = valueLabel === undefined || valueLabel === null ? '' : String(valueLabel)
       const extraText = extraLabel === undefined || extraLabel === null ? '' : String(extraLabel)
-      const valueWidth = valueText ? this.measureTextWidth(valueText, valueStyle) : 0
-      const extraWidth = extraText ? this.measureTextWidth(extraText, extraStyle) : 0
+      const valueWidth = valueText ? measureTextWidth(valueText, valueStyle, this.textWidthCache) : 0
+      const extraWidth = extraText ? measureTextWidth(extraText, extraStyle, this.textWidthCache) : 0
 
       let totalWidth = basePadding + valueWidth
       if (extraWidth > 0) {
@@ -350,31 +338,6 @@ export class BarChart extends Container {
     return maxWidth
   }
 
-  private measureTextWidth(text: string, style: TextStyle) {
-    const cacheKey = this.getTextWidthCacheKey(text, style)
-    const cached = this.textWidthCache.get(cacheKey)
-    if (cached !== undefined) {
-      return cached
-    }
-    try {
-      const width = CanvasTextMetrics.measureText(text, style).width
-      this.textWidthCache.set(cacheKey, width)
-      return width
-    }
-    catch {
-      const fontSize = typeof style.fontSize === 'number' ? style.fontSize : Number.parseFloat(String(style.fontSize)) || 0
-      const averageCharWidth = fontSize * 0.6
-      const fallbackWidth = text.length * averageCharWidth
-      this.textWidthCache.set(cacheKey, fallbackWidth)
-      return fallbackWidth
-    }
-  }
-
-  private getTextWidthCacheKey(text: string, style: TextStyle) {
-    const fontFamily = Array.isArray(style.fontFamily) ? style.fontFamily.join(',') : style.fontFamily ?? ''
-    const fontSize = typeof style.fontSize === 'number' ? style.fontSize : String(style.fontSize ?? '')
-    return `${fontFamily}|${fontSize}|${text}`
-  }
 
   update(idx: number) {
     if (idx >= this.data.length) {

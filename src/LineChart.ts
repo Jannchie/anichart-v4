@@ -1,8 +1,10 @@
 import type { ScaleLinear } from 'd3'
-import type { Config, ValueScaleType } from './Config'
+import type { Config } from './Config'
 import type { RankedData } from './Data'
 import { blur, extent, InternSet, scaleLinear } from 'd3'
-import { CanvasTextMetrics, Container, Graphics, Text } from 'pixi.js'
+import { Container, Graphics, Text } from 'pixi.js'
+import { getValueScale } from './utils/scale'
+import { measureTextWidth } from './utils/textMetrics'
 
 const TITLE_FONT_SIZE = 36
 const TITLE_PADDING = 24
@@ -28,42 +30,7 @@ function clamp01(value: number) {
   return clamp(value, 0, 1)
 }
 
-function ensureRange(minValue: number, maxValue: number) {
-  if (!Number.isFinite(minValue)) {
-    minValue = 0
-  }
-  if (!Number.isFinite(maxValue)) {
-    maxValue = 1
-  }
-  if (minValue === maxValue) {
-    const offset = minValue === 0 ? 1 : Math.abs(minValue) * 0.01 || 1
-    return [minValue - offset, maxValue + offset] as const
-  }
-  if (minValue > maxValue) {
-    return [maxValue, minValue] as const
-  }
-  return [minValue, maxValue] as const
-}
-
-function getValueScale(type: ValueScaleType, min?: number, max?: number, delta: number = 1000) {
-  let safeMin = min ?? 0
-  let safeMax = max ?? 1
-  ;[safeMin, safeMax] = ensureRange(safeMin, safeMax)
-  if (type === 'from-zero') {
-    const zeroBase = Math.min(0, safeMin)
-    return scaleLinear().domain([zeroBase, safeMax]).range([0, 1])
-  }
-  if (type === 'from-min') {
-    const span = safeMax - safeMin
-    return scaleLinear().domain([safeMin - span, safeMax]).range([0, 1])
-  }
-  if (type === 'from-delta') {
-    const baseMin = safeMax - delta
-    const domainMin = Math.min(baseMin, safeMin)
-    return scaleLinear().domain([domainMin, safeMax]).range([0, 1])
-  }
-  throw new Error('Unknown value scale type')
-}
+const valueScaleOptions = { ensureRange: true, zeroBaseline: 'min' } as const
 
 class LineSeries extends Container {
   private readonly line: Graphics
@@ -79,7 +46,7 @@ class LineSeries extends Container {
 
   constructor(options: { points: SeriesPoint[], color: number, label: string, fontFamily: string }) {
     super()
-    this.points = options.points.filter(point => point.data.alpha > 0)
+    this.points = options.points.filter(point => Number.isFinite(point.data.value))
     this.frameIndices = this.points.map(point => point.frameIndex)
     this.color = options.color
     this.labelText = options.label
@@ -194,8 +161,7 @@ class LineSeries extends Container {
     const lastPoint = this.activePointBuffer[lastIndex]
     const lastX = this.xBuffer[lastIndex]
     const lastY = this.yBuffer[lastIndex]
-    const seriesAlpha = clamp01(lastPoint.data.alpha)
-    this.alpha = seriesAlpha
+    this.alpha = 1
 
     this.marker.position.set(lastX, lastY)
 
@@ -387,7 +353,13 @@ export class LineChart extends Container {
     let valueScale = this.frameValueScales[frameIndex]
     if (!valueScale) {
       const [min, max] = extent(frameData, d => d.value)
-      valueScale = getValueScale(this.config.valueScaleType, min, max, this.config.valueScaleDelta)
+      valueScale = getValueScale(
+        this.config.valueScaleType,
+        min,
+        max,
+        this.config.valueScaleDelta,
+        valueScaleOptions,
+      )
       this.frameValueScales[frameIndex] = valueScale
     }
 
@@ -448,7 +420,13 @@ export class LineChart extends Container {
       }
       runningMinValues[frameIndex] = cumulativeMin
       runningMaxValues[frameIndex] = cumulativeMax
-      this.frameValueScales[frameIndex] = getValueScale(this.config.valueScaleType, safeMin, safeMax, this.config.valueScaleDelta)
+      this.frameValueScales[frameIndex] = getValueScale(
+        this.config.valueScaleType,
+        safeMin,
+        safeMax,
+        this.config.valueScaleDelta,
+        valueScaleOptions,
+      )
       this.frameIdSets[frameIndex] = new InternSet(frame.map(item => item.id))
       if (frame.length > 0) {
         let maxStep = frame[0].step
@@ -486,8 +464,13 @@ export class LineChart extends Container {
       const cumulativeMaxValue = runningMaxValues[i] ?? smoothedMax
       const domainMin = Math.min(smoothedMin, cumulativeMinValue)
       const domainMax = Math.max(smoothedMax, cumulativeMaxValue)
-      const [minValue, maxValue] = ensureRange(domainMin, domainMax)
-      this.frameValueScales[i] = getValueScale(this.config.valueScaleType, minValue, maxValue, this.config.valueScaleDelta)
+      this.frameValueScales[i] = getValueScale(
+        this.config.valueScaleType,
+        domainMin,
+        domainMax,
+        this.config.valueScaleDelta,
+        valueScaleOptions,
+      )
     }
   }
 
@@ -531,7 +514,7 @@ export class LineChart extends Container {
         this.ticksComponentMap.set(tick, tickContainer)
         this.tickLineMap.set(tick, tickLine)
 
-        const tickWidth = this.measureTextWidth(tickText.text ?? '', tickText)
+        const tickWidth = measureTextWidth(tickText.text ?? '', tickText.style, this.textWidthCache)
         this.tickLabelMaxWidth = Math.max(this.tickLabelMaxWidth, tickWidth)
         this.tickLabelHeight = Math.max(this.tickLabelHeight, tickText.height)
       }
@@ -674,26 +657,4 @@ export class LineChart extends Container {
     return clamp(value, 0, this.plotWidth)
   }
 
-  private measureTextWidth(text: string, base: Text) {
-    const fontFamily = Array.isArray(base.style.fontFamily) ? base.style.fontFamily.join(',') : base.style.fontFamily ?? ''
-    const fontSize = typeof base.style.fontSize === 'number' ? base.style.fontSize : String(base.style.fontSize ?? '')
-    const cacheKey = `${fontFamily}|${fontSize}|${text}`
-    const cached = this.textWidthCache.get(cacheKey)
-    if (cached !== undefined) {
-      return cached
-    }
-    try {
-      const width = CanvasTextMetrics.measureText(text, base.style).width
-      this.textWidthCache.set(cacheKey, width)
-      return width
-    }
-    catch {
-      const numericSize = typeof base.style.fontSize === 'number'
-        ? base.style.fontSize
-        : Number.parseFloat(String(base.style.fontSize ?? 0)) || 0
-      const fallbackWidth = text.length * numericSize * 0.6
-      this.textWidthCache.set(cacheKey, fallbackWidth)
-      return fallbackWidth
-    }
-  }
 }

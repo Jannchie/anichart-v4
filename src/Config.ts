@@ -1,6 +1,6 @@
 import type { Data } from './Data'
 import dayjs from 'dayjs'
-import { colorMap, colors } from './main'
+import { colorMap, colors } from './resources'
 
 export type ValueScaleType = 'from-zero' | 'from-min' | 'from-delta'
 
@@ -130,7 +130,7 @@ export class Config {
     this.getValueExtra = (_: Data) => ''
     this.getBarInfo = (d: any) => d.id
     this.maxRetentionTimeSec = 5
-    this.decayRate = 0
+    this.decayRate = 1
     this.transitionDurationSec = 0.5
     this.totalDurationSec = 10
     this.barInfoPadding = 10

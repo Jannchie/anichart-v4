@@ -7,6 +7,10 @@ import { blur, csv, extent, group, InternSet, interpolate, range, scaleLinear } 
 export class DataProcessor {
   static async processCSV(path: string, config: Config): Promise<RankedData[][]> {
     const rawData = await csv(path)
+    return DataProcessor.processRows(rawData, config)
+  }
+
+  static processRows(rawData: DSVRowArray<string>, config: Config): RankedData[][] {
     console.time('process')
     const data = DataProcessor.preprocess(rawData, config)
     console.timeEnd('process')
@@ -68,14 +72,16 @@ export class DataProcessor {
       }
       // 根据 value 排序
       list.sort((a, b) => {
+        const aValue = a.alpha <= 0 ? Number.NaN : a.value
+        const bValue = b.alpha <= 0 ? Number.NaN : b.value
         // 如果是 NaN 则排在最后
-        if (Number.isNaN(a.value)) {
+        if (Number.isNaN(aValue)) {
           return 1
         }
-        if (Number.isNaN(b.value)) {
+        if (Number.isNaN(bValue)) {
           return -1
         }
-        return b.value - a.value
+        return bValue - aValue
       })
       // 多留一位
       return list.slice(0, config.topN + 1).map((d, i) => {
