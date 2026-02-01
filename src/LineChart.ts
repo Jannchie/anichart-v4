@@ -656,5 +656,4 @@ export class LineChart extends Container {
   private clampToPlot(value: number) {
     return clamp(value, 0, this.plotWidth)
   }
-
 }

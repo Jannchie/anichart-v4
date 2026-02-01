@@ -29,6 +29,10 @@ export class BarChart extends Container {
   xAxisLabelPadding: number = 10
   tickWidthMap: Map<number, number>
   textWidthCache: Map<string, number>
+  axisOffset: number
+  totalAvailableWidth: number
+  valueLabelStyle: TextStyle
+  extraValueLabelStyle: TextStyle
   frameValueScales: ScaleLinear<number, number>[]
   frameIdSets: InternSet<string>[]
   frameMaxSteps: Array<number | undefined>
@@ -218,6 +222,7 @@ export class BarChart extends Container {
         image: imgSprite,
         leftLabelWidth: maxLabelWidth,
         showLabel: config.showLabel,
+        valueLabelPadding: config.valueLabelPadding,
       })
       return [id, comp]
     }))
@@ -226,12 +231,23 @@ export class BarChart extends Container {
       v.settings.leftLabelWidth = maxLabelWidth
       v.settings.showLabel = config.showLabel
     }
-    const maxValueLabelWidth = this.getMaxValueLabelWidth(data, config)
+    const axisOffset = config.showLabel ? maxLabelWidth + config.leftLabelPadding : 0
+    this.axisOffset = axisOffset
+    this.totalAvailableWidth = Math.max(config.width - axisOffset, 0)
+
+    this.valueLabelStyle = new TextStyle({
+      fontFamily: config.fontFamily,
+      fontSize: Math.max(config.barHeight - 12, 1),
+    })
+    this.extraValueLabelStyle = new TextStyle({
+      fontFamily: config.fontFamily,
+      fontSize: 32,
+    })
+
+    const rightReservedWidth = this.getRightReservedWidth(data, config, frameValueScales)
 
     // Determine drawable width after reserving space for labels and padding
-    const axisOffset = config.showLabel ? maxLabelWidth + config.leftLabelPadding : 0
-    const rightReservedWidth = maxValueLabelWidth + config.valueLabelPadding
-    const maxBarWidth = Math.max(config.width - axisOffset - rightReservedWidth, 0)
+    const maxBarWidth = Math.max(this.totalAvailableWidth - rightReservedWidth, 0)
     this.maxBarWidth = maxBarWidth
     this.xAxisLabel.position.set(this.maxBarWidth / 2, 0)
     this.xAxisLabel.visible = hasXAxisLabel
@@ -305,39 +321,59 @@ export class BarChart extends Container {
     return maxLabelWidth
   }
 
-  private getMaxValueLabelWidth(data: RankedData[][], config: Config) {
-    const flatData = data.flat()
-    if (flatData.length === 0) {
-      return 0
-    }
-    const valueStyle = new TextStyle({
-      fontFamily: config.fontFamily,
-      fontSize: Math.max(config.barHeight - 12, 1),
-    })
-    const extraStyle = new TextStyle({
-      fontFamily: config.fontFamily,
-      fontSize: 32,
-    })
-    let maxWidth = 0
+  private getValueLabelInfo(item: RankedData, config: Config) {
+    const valueLabel = config.getValueLabel(item)
+    const extraLabel = config.getValueExtra(item)
+    const valueText = valueLabel === undefined || valueLabel === null ? '' : String(valueLabel)
+    const extraText = extraLabel === undefined || extraLabel === null ? '' : String(extraLabel)
+    const valueWidth = valueText ? measureTextWidth(valueText, this.valueLabelStyle, this.textWidthCache) : 0
+    const extraWidth = extraText ? measureTextWidth(extraText, this.extraValueLabelStyle, this.textWidthCache) : 0
     const basePadding = config.valueLabelPadding ?? 0
-
-    for (const item of flatData) {
-      const valueLabel = config.getValueLabel(item)
-      const extraLabel = config.getValueExtra(item)
-      const valueText = valueLabel === undefined || valueLabel === null ? '' : String(valueLabel)
-      const extraText = extraLabel === undefined || extraLabel === null ? '' : String(extraLabel)
-      const valueWidth = valueText ? measureTextWidth(valueText, valueStyle, this.textWidthCache) : 0
-      const extraWidth = extraText ? measureTextWidth(extraText, extraStyle, this.textWidthCache) : 0
-
-      let totalWidth = basePadding + valueWidth
-      if (extraWidth > 0) {
-        totalWidth += EXTRA_VALUE_LABEL_PADDING + extraWidth
-      }
-      maxWidth = Math.max(maxWidth, totalWidth)
+    let totalWidth = basePadding + valueWidth
+    if (extraWidth > 0) {
+      totalWidth += EXTRA_VALUE_LABEL_PADDING + extraWidth
     }
-    return maxWidth
+    return {
+      valueText,
+      extraText,
+      totalWidth,
+    }
   }
 
+  private getRightReservedWidth(data: RankedData[][], config: Config, frameValueScales: ScaleLinear<number, number>[]) {
+    if (data.length === 0 || this.totalAvailableWidth <= 0) {
+      return 0
+    }
+    const totalAvailable = this.totalAvailableWidth
+    let maxRequired = 0
+    for (const [frameIndex, frame] of data.entries()) {
+      const scale = frameValueScales[frameIndex]
+      if (!scale) {
+        continue
+      }
+      for (const item of frame) {
+        const { totalWidth } = this.getValueLabelInfo(item, config)
+        if (totalWidth <= 0) {
+          continue
+        }
+        const ratio = Math.max(0, Math.min(scale(item.value), 1))
+        if (ratio <= 0) {
+          if (totalWidth > totalAvailable) {
+            continue
+          }
+          continue
+        }
+        const required = (totalWidth - totalAvailable * (1 - ratio)) / ratio
+        if (required > totalAvailable) {
+          continue
+        }
+        if (required > maxRequired) {
+          maxRequired = required
+        }
+      }
+    }
+    return Math.max(0, Math.min(maxRequired, totalAvailable))
+  }
 
   update(idx: number) {
     if (idx >= this.data.length) {
@@ -383,15 +419,18 @@ export class BarChart extends Container {
       }
       this.barLayerDirection.set(d.id, effectiveDirection)
       bar.zIndex = effectiveDirection === 'up' ? 2 : 1
-
+      const valueRatio = Math.max(0, Math.min(valueScale(d.value), 1))
+      const barWidth = this.maxBarWidth * valueRatio
+      const { valueText, extraText, totalWidth } = this.getValueLabelInfo(d, config)
+      const canShowValue = totalWidth <= (this.totalAvailableWidth - barWidth)
       bar.update({
         y: d.blurRank * (config.barHeight + config.barGap),
         label: d.label,
-        width: this.maxBarWidth * Math.max(0, Math.min(valueScale(d.value), 1)),
+        width: barWidth,
         alpha: d.alpha,
         color: config.getColor(d),
-        valueLabel: config.getValueLabel(d),
-        extraValueLabel: config.getValueExtra(d),
+        valueLabel: canShowValue ? valueText : '',
+        extraValueLabel: canShowValue ? extraText : '',
         barInfo: config.getBarInfo(d, i, idx),
         showLabel: config.showLabel,
       })

@@ -1,4 +1,3 @@
-/* eslint-disable unicorn/prefer-top-level-await */
 import type { RankedData } from './Data'
 import dayjs from 'dayjs'
 import { Application } from 'pixi.js'
