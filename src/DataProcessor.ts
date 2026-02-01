@@ -216,6 +216,17 @@ export class DataProcessor {
         continue
       }
       const baseSequence: Data[] = [...sortedGroup]
+      const first = baseSequence[0]
+      if (first && first.step > startStep) {
+        baseSequence.unshift(createNode(first, {
+          value: Number.NaN,
+          step: startStep,
+          alpha: 0,
+          up: false,
+          placeholder: true,
+          skipNaNBridge: false,
+        }))
+      }
       if ((endStep - last.step) * stepSec > config.maxRetentionTimeSec) {
         baseSequence.push(
           createNode(last, {
