@@ -136,7 +136,7 @@ export class BarChart extends Container {
           const tickText = new Text({
             text: tick.toString(),
             style: {
-              fontSize: 24,
+              fontSize: config.tickLabelFontSize,
               fill: 0xAA_AA_AA,
               fontFamily: config.fontFamily,
             },

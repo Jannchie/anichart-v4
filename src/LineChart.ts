@@ -277,7 +277,7 @@ export class LineChart extends Container {
     })
 
     const xTickStyle = {
-      fontSize: 24,
+      fontSize: config.tickLabelFontSize,
       fill: 0xAA_AA_AA,
       fontFamily: config.fontFamily,
     }
@@ -294,7 +294,7 @@ export class LineChart extends Container {
     const hasXAxisLabel = Boolean(config.xAxisLabel?.trim())
     const xAxisLabelPaddingUsed = hasXAxisLabel ? this.xAxisLabelPadding : 0
     const xAxisLabelHeight = hasXAxisLabel ? this.xAxisLabel.height : 0
-    this.xAxisTickHeight = DEFAULT_X_AXIS_TICK_HEIGHT
+    this.xAxisTickHeight = Math.max(DEFAULT_X_AXIS_TICK_HEIGHT, Math.ceil(config.tickLabelFontSize * 1.6))
     this.leftMargin = this.tickLabelMaxWidth + this.yAxisLabelPadding
 
     const titleFontSize = typeof this.titleLabel.style.fontSize === 'number'
@@ -493,7 +493,7 @@ export class LineChart extends Container {
         const tickText = new Text({
           text: tick.toString(),
           style: {
-            fontSize: 24,
+            fontSize: this.config.tickLabelFontSize,
             fill: 0xAA_AA_AA,
             fontFamily: this.config.fontFamily,
           },

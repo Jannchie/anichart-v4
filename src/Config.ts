@@ -47,6 +47,7 @@ interface IConfig {
   getStepLabel: (step: number) => string
   borderRadius: number
   tickNum: number
+  tickLabelFontSize: number
   imageField: string
   barInfoStyle: 'default' | 'reverse'
   xAxisLabel: string
@@ -95,6 +96,7 @@ export class Config {
   getStepLabel: (step: number) => string
   borderRadius: number
   tickNum: number
+  tickLabelFontSize: number
   valueScaleDelta: number
   getValueExtra: (_: Data) => string
   xAxisLabel: string
@@ -154,6 +156,7 @@ export class Config {
     this.borderRadius = 0
     this.fontFamily = 'Berkeley Mono'
     this.tickNum = 8
+    this.tickLabelFontSize = 24
     this.xAxisLabel = ''
     this.title = ''
     const widthProvided = Object.prototype.hasOwnProperty.call(config, 'width')
