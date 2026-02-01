@@ -5,6 +5,7 @@ import { blur, extent, InternSet } from 'd3'
 import { Container, Graphics, Sprite, Text, TextStyle } from 'pixi.js'
 import { BarComponent, EXTRA_VALUE_LABEL_PADDING } from './bar'
 import { textureMap } from './resources'
+import { getExtraValueLabelFontSize, getValueLabelFontSize } from './utils/labelFonts'
 import { getValueScale } from './utils/scale'
 import { measureTextWidth } from './utils/textMetrics'
 
@@ -236,13 +237,15 @@ export class BarChart extends Container {
     this.axisOffset = axisOffset
     this.totalAvailableWidth = Math.max(config.width - axisOffset, 0)
 
+    const valueFontSize = getValueLabelFontSize(config.barHeight)
+    const extraFontSize = getExtraValueLabelFontSize(valueFontSize)
     this.valueLabelStyle = new TextStyle({
       fontFamily: config.fontFamily,
-      fontSize: Math.max(config.barHeight - 12, 1),
+      fontSize: valueFontSize,
     })
     this.extraValueLabelStyle = new TextStyle({
       fontFamily: config.fontFamily,
-      fontSize: 32,
+      fontSize: extraFontSize,
     })
 
     const rightReservedWidth = this.getRightReservedWidth(data, config, frameValueScales)

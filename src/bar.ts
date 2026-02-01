@@ -1,7 +1,8 @@
 import type { Sprite } from 'pixi.js'
 import { Container, Graphics, Text } from 'pixi.js'
+import { getExtraValueLabelFontSize, getValueLabelFontSize } from './utils/labelFonts'
 
-export const EXTRA_VALUE_LABEL_PADDING = 20
+export const EXTRA_VALUE_LABEL_PADDING = 8
 
 interface BarItemSettings {
   x: number
@@ -88,12 +89,16 @@ export class BarComponent extends Container {
         fill: settings.colorLabel,
       },
     })
+    this.leftLabel.anchor.set(1, 0.5)
 
     this.barInfoContainer = new Container()
+    const valueFontSize = getValueLabelFontSize(settings.fontSize ?? 12)
+    const extraFontSize = getExtraValueLabelFontSize(valueFontSize)
+
     this.barInfoText = new Text({
       style: {
         fontFamily: settings.fontFamily,
-        fontSize: settings.fontSize! - 12, // TODO: a magic number
+        fontSize: valueFontSize,
         fill: settings.colorBarInfo,
         fontWeight: 'bold',
         dropShadow: {
@@ -104,13 +109,13 @@ export class BarComponent extends Container {
         },
       },
     })
+    this.barInfoText.anchor.set(0, 0.5)
 
     this.valueLabel = new Text({
       style: {
         fontFamily: settings.fontFamily,
-        fontSize: settings.fontSize! - 12, // TODO: a magic number
+        fontSize: valueFontSize,
         fill: settings.colorLabel,
-        fontWeight: 'bold',
         dropShadow: {
           color: 0x00_00_00,
           alpha: 0.5,
@@ -119,14 +124,15 @@ export class BarComponent extends Container {
         },
       },
     })
+    this.valueLabel.anchor.set(0, 0.5)
     this.extraValueLabel = new Text({
       style: {
-        fontSize: 32,
+        fontSize: extraFontSize,
         fill: 0xAA_AA_AA,
         fontFamily: settings.fontFamily,
-        fontWeight: 'bold',
       },
     })
+    this.extraValueLabel.anchor.set(0, 0.5)
     this.valueContainer = new Container()
     this.valueContainer.addChild(this.valueLabel, this.extraValueLabel)
     this.addChild(this.bar)
@@ -180,14 +186,14 @@ export class BarComponent extends Container {
     }
     switch (this.settings.barInfoStyle) {
       case 'default': {
-        barInfoText.position.set(0, height / 2 - barInfoText.height / 2)
+        barInfoText.position.set(0, height / 2)
         if (image) {
-          image.position.set(barInfoText.width + barInfoPadding, 0)
+          image.position.set(barInfoText.width + barInfoPadding, height / 2 - image.height / 2)
         }
         break
       }
       case 'reverse': {
-        barInfoText.position.set((image?.width ?? 0) + barInfoPadding, height / 2 - barInfoText.height / 2)
+        barInfoText.position.set((image?.width ?? 0) + barInfoPadding, height / 2)
         if (image) {
           image.position.set(0, height / 2 - image.height / 2)
         }
@@ -231,7 +237,7 @@ export class BarComponent extends Container {
         if (!leftLabelWidth) {
           leftLabelWidth = this.lastLabelWidth
         }
-        leftLabel.position.set(-this.lastLabelWidth, (height - this.lastLabelHeight) / 2)
+        leftLabel.position.set(0, height / 2)
       }
       else {
         leftLabelWidth = 0
@@ -272,10 +278,10 @@ export class BarComponent extends Container {
       }
     }
     this.valueLabel.text = valueLabel
-    this.valueLabel.position.set(width + valueLabelPadding, (height - this.valueLabel.height) / 2)
+    this.valueLabel.position.set(width + valueLabelPadding, height / 2)
     this.extraValueLabel.text = this.settings.extraValueLabel ?? ''
     // TODO: 20 is a magic padding number
-    this.extraValueLabel.position.set(this.valueLabel.x + this.valueLabel.width + EXTRA_VALUE_LABEL_PADDING, (height - this.extraValueLabel.height) / 2)
+    this.extraValueLabel.position.set(this.valueLabel.x + this.valueLabel.width + EXTRA_VALUE_LABEL_PADDING, height / 2)
     this.position.set(x, y)
     this.alpha = this.settings.alpha
   }
