@@ -1,5 +1,5 @@
 import type { Sprite } from 'pixi.js'
-import { BitmapText, Container, Graphics, Text } from 'pixi.js'
+import { Container, Graphics, Text } from 'pixi.js'
 
 export const EXTRA_VALUE_LABEL_PADDING = 20
 
@@ -36,13 +36,13 @@ export class BarComponent extends Container {
   barItemMask: Graphics
   leftLabel: Text
   barInfoContainer: Container
-  barInfoText: BitmapText
-  valueLabel: BitmapText
+  barInfoText: Text
+  valueLabel: Text
   settings: BarItemSettings
   bar: Container
   image?: Sprite
   barItem: Graphics
-  extraValueLabel: BitmapText
+  extraValueLabel: Text
   valueContainer: Container
   private lastLabelText = ''
   private lastLabelWidth = 0
@@ -90,11 +90,12 @@ export class BarComponent extends Container {
     })
 
     this.barInfoContainer = new Container()
-    this.barInfoText = new BitmapText({
+    this.barInfoText = new Text({
       style: {
         fontFamily: settings.fontFamily,
         fontSize: settings.fontSize! - 12, // TODO: a magic number
         fill: settings.colorBarInfo,
+        fontWeight: 'bold',
         dropShadow: {
           color: 0x00_00_00,
           alpha: 0.5,
@@ -104,11 +105,12 @@ export class BarComponent extends Container {
       },
     })
 
-    this.valueLabel = new BitmapText({
+    this.valueLabel = new Text({
       style: {
         fontFamily: settings.fontFamily,
         fontSize: settings.fontSize! - 12, // TODO: a magic number
         fill: settings.colorLabel,
+        fontWeight: 'bold',
         dropShadow: {
           color: 0x00_00_00,
           alpha: 0.5,
@@ -117,11 +119,12 @@ export class BarComponent extends Container {
         },
       },
     })
-    this.extraValueLabel = new BitmapText({
+    this.extraValueLabel = new Text({
       style: {
         fontSize: 32,
         fill: 0xAA_AA_AA,
         fontFamily: settings.fontFamily,
+        fontWeight: 'bold',
       },
     })
     this.valueContainer = new Container()

@@ -223,6 +223,7 @@ export class BarChart extends Container {
         leftLabelWidth: maxLabelWidth,
         showLabel: config.showLabel,
         valueLabelPadding: config.valueLabelPadding,
+        radius: config.borderRadius,
       })
       return [id, comp]
     }))
