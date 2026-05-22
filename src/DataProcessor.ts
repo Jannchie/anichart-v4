@@ -64,6 +64,11 @@ export class DataProcessor {
     const baselineScale = DataProcessor.buildBaselineScale(data, config)
     console.timeEnd('baseline')
 
+    // carry-forward 保留窗口：与 buildSamplers 的段内 gap 容忍度对称，
+    // 取 maxRetentionTimeSec。一个 id 最后一次出现后，在此窗口内继续以 lastValue 留在榜上，
+    // 超出窗口才进入 transitionDurationSec 的 fade-out。
+    const carrySteps = stepSec > 0 ? config.maxRetentionTimeSec / stepSec : 0
+
     const stepInterval = totalStep > 0 ? (endStep - startStep) / totalFrame : 0
     let stepList: number[]
     if (stepInterval > 0 && Number.isFinite(stepInterval)) {
@@ -79,7 +84,7 @@ export class DataProcessor {
       stepList = Array.from({ length: totalFrame }, () => startStep)
     }
     console.time('fillRank')
-    const result = DataProcessor.fillRank(stepList, samplers, baselineScale, transitionSteps, config)
+    const result = DataProcessor.fillRank(stepList, samplers, baselineScale, transitionSteps, carrySteps, config)
     console.timeEnd('fillRank')
     DataProcessor.addTailingFrames(config, result)
     return result
@@ -90,13 +95,14 @@ export class DataProcessor {
     samplers: Sampler[],
     baselineScale: BaselineFn,
     transitionSteps: number,
+    carrySteps: number,
     config: Config,
   ): RankedData[][] {
     return stepList.map((step) => {
       const baseline = baselineScale(step)
       const list: RankedData[] = []
       for (const sampler of samplers) {
-        const sampled = DataProcessor.sampleAtStep(sampler, step, baseline, transitionSteps)
+        const sampled = DataProcessor.sampleAtStep(sampler, step, baseline, transitionSteps, carrySteps)
         list.push({
           id: sampler.id,
           label: sampler.label,
@@ -166,39 +172,40 @@ export class DataProcessor {
     return samplers
   }
 
-  // 「末位以下」基线：每个真实 step 上取第 (topN + baselineOffset) 位的值；
-  // 条目不足时用末尾邻位平均差线性外推。然后用 d3 scaleLinear 在帧 step 上插值。
+  // 每个真实 step 上按 valueScaleType 计算 X 轴显示最小值，作为 enter/exit ramp 的起点/终点。
+  //   from-zero  → 0
+  //   from-min   → 2·dataMin − dataMax（topN 范围内）
+  //   from-delta → dataMax − valueScaleDelta
+  // 跟 BarChart 的 getValueScale 计算同步，保证新 bar 从「轴底」浮起，旧 bar 沉到「轴底」消失。
   private static buildBaselineScale(data: Data[], config: Config): BaselineFn {
     const real = data.filter(d => d.alpha > 0 && Number.isFinite(d.value))
     if (real.length === 0) {
       return () => 0
     }
     const stepGroups = group(real, d => d.step)
-    const offset = Math.max(1, Math.round(config.baselineOffset))
-    const targetIdx = config.topN + offset
     const steps: number[] = []
     const baselines: number[] = []
     const sortedKeys = [...stepGroups.keys()].sort((a, b) => a - b)
     for (const step of sortedKeys) {
       const arr = [...stepGroups.get(step)!].sort((a, b) => b.value - a.value)
-      const n = arr.length
-      let bv: number
-      if (n >= targetIdx) {
-        bv = arr[targetIdx - 1].value
-      }
-      else if (n >= 2) {
-        const tail = arr[n - 1].value
-        const span = arr[0].value - tail
-        const diff = span > 0 ? span / (n - 1) : Math.max(Math.abs(tail) * 0.05, 1)
-        bv = tail - diff * (targetIdx - n)
-      }
-      else {
-        const v = arr[0].value
-        const diff = Math.max(Math.abs(v) * 0.05, 1)
-        bv = v - diff * (targetIdx - 1)
+      const topNArr = arr.slice(0, config.topN)
+      const dataMax = topNArr[0]?.value ?? 0
+      const dataMin = topNArr.at(-1)?.value ?? dataMax
+      let axisMin: number
+      switch (config.valueScaleType) {
+        case 'from-zero':
+          axisMin = 0
+          break
+        case 'from-min':
+          axisMin = dataMin - (dataMax - dataMin)
+          break
+        case 'from-delta':
+        default:
+          axisMin = dataMax - config.valueScaleDelta
+          break
       }
       steps.push(step)
-      baselines.push(bv)
+      baselines.push(axisMin)
     }
     if (steps.length === 1) {
       const v = baselines[0]
@@ -209,22 +216,32 @@ export class DataProcessor {
   }
 
   // 区间判定：
-  //   segment 内 → 段内 piecewise easing 插值，alpha=1
-  //   [first - trans, first) → enter：value 从 baseline 缓动到 first.value，alpha 0→1
-  //   (last, last + trans] → exit：value 从 last.value 缓动到 baseline，alpha 1→0
-  //   其他（段间长 gap、首段之前、末段之后） → value=baseline, alpha=0
-  // segment 划分保证：相邻段 transition 区间不重叠（gap > maxRet, trans ≤ maxRet/2）。
+  //   [first, last]                        → inside: piecewise easing 插值，alpha=1
+  //   (last, last + carry]                 → carry-forward: value=lastValue, alpha=1
+  //   [first - trans, first)               → enter: value 从 baseline (axis min) 缓动到 firstValue, alpha 0→1
+  //   (last + carry, last + carry + trans] → exit:  value 从 lastValue 缓动到 baseline (axis min), alpha 1→0
+  //   其他（段外远离 / 段间长 gap）        → value=baseline, alpha=0
+  //
+  // baseline 由 buildBaselineScale 按 valueScaleType 算出当前帧的「显示最小值」，所以入场 bar 从轴底浮起，
+  // 出场 bar 沉到轴底。rank 由排序按当前 sampled value 自然推导：value 小 → rank=parking → applyVelocity
+  // 把它压在屏外；value 长大穿过 topN 末位后，target rank ∈ [0, topN)，visualRank 平滑跟随。
+  // applyVelocity 的 alpha 用 min(sampleAlpha, parkingMask)：ramp 阶段跟随 sampleAlpha，parking 时强制 0。
   private static sampleAtStep(
     sampler: Sampler,
     step: number,
     baseline: number,
     transitionSteps: number,
+    carrySteps: number = 0,
   ): SampleResult {
     const segments = sampler.segments
     for (const seg of segments) {
-      if (step >= seg.firstStep && step <= seg.lastStep) {
+      if (step >= seg.firstStep && step <= seg.lastStep + carrySteps) {
+        const inSegment = step <= seg.lastStep
+        const value = inSegment
+          ? DataProcessor.interpolateInSegment(seg, step)
+          : seg.points.at(-1)!.value
         return {
-          value: DataProcessor.interpolateInSegment(seg, step),
+          value,
           alpha: 1,
           raw: DataProcessor.rawNearStep(seg, step),
         }
@@ -244,8 +261,9 @@ export class DataProcessor {
         }
       }
       for (const seg of segments) {
-        if (step > seg.lastStep && step <= seg.lastStep + transitionSteps) {
-          const t = (step - seg.lastStep) / transitionSteps
+        const exitStart = seg.lastStep + carrySteps
+        if (step > exitStart && step <= exitStart + transitionSteps) {
+          const t = (step - exitStart) / transitionSteps
           const eased = easeInOutCubic(t)
           const source = seg.points.at(-1)!
           return {
@@ -382,8 +400,13 @@ export class DataProcessor {
     const visualRank = new Map<string, number>()
     const velocity = new Map<string, number>()
 
+    // alpha = min(sampleAlpha, parkingMask)
+    //   sampleAlpha 由 sampleAtStep 给出，跟随 enter/exit ramp 的 0↔1 渐变；
+    //   parkingMask = clamp(topN - blurRank, 0, 1)，把 parking 槽 (visualRank≥topN) 的 bar 强制压成透明。
+    // 入参 d.alpha 已经是 sampleAlpha（fillRank 写入），原地取 min 即可。
     const writeAlpha = (d: RankedData) => {
-      d.alpha = Math.max(0, Math.min(1, topN - d.blurRank))
+      const parkingMask = Math.max(0, Math.min(1, topN - d.blurRank))
+      d.alpha = Math.min(d.alpha, parkingMask)
     }
 
     // 第 0 帧：snap 到 clamped rank（外部直接坐落在 parking）。

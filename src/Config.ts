@@ -26,7 +26,6 @@ interface IConfig {
   getValueLabel: (d: any, i: number) => any
   getBarInfo: (d: any, i: number, step: number) => any
   maxRetentionTimeSec: number // 最大暂留时间
-  baselineOffset: number
   transitionDurationSec: number
   totalDurationSec: number
   fps: number
@@ -78,7 +77,6 @@ export class Config {
   getValueLabel: (d: any, i?: number) => any
   getBarInfo: (d: any, i?: number, step?: number) => any
   maxRetentionTimeSec: number
-  baselineOffset: number
   transitionDurationSec: number
   totalDurationSec: number
   fps: number
@@ -136,11 +134,8 @@ export class Config {
     }
     this.getValueExtra = (_: Data) => ''
     this.getBarInfo = (d: any) => d.id
-    this.maxRetentionTimeSec = 5
-    // 入场起点 / 出场终点取「真实数据排名第 topN + baselineOffset 位」的值。
-    // 默认外推 2 位，让新进/离场 bar 不只是擦着末位，而是从更明确的「视线外」滑入/滑出。
-    this.baselineOffset = 2
-    this.transitionDurationSec = 1
+    this.maxRetentionTimeSec = 50
+    this.transitionDurationSec = 2
     this.totalDurationSec = 10
     this.barInfoPadding = 10
     this.fps = 60

@@ -83,7 +83,7 @@ const config = new Config({
   valueScaleType: 'from-delta',
   valueScaleDelta: 250,
   y: 0,
-  transitionDurationSec: 2,
+  transitionDurationSec: 12,
   labelField: '-',
   topN: 16,
   totalDurationSec: 120,

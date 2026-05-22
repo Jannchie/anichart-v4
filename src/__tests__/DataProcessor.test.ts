@@ -37,6 +37,7 @@ const sampleAtStep = (DataProcessor as any).sampleAtStep as (
   step: number,
   baseline: number,
   transitionSteps: number,
+  carrySteps?: number,
 ) => SampleResult
 
 const fillRank = (DataProcessor as any).fillRank as (
@@ -44,6 +45,7 @@ const fillRank = (DataProcessor as any).fillRank as (
   samplers: Sampler[],
   baselineScale: (step: number) => number,
   transitionSteps: number,
+  carrySteps: number,
   config: Config,
 ) => RankedData[][]
 
@@ -132,42 +134,45 @@ describe('dataprocessor.buildsamplers', () => {
 })
 
 describe('dataprocessor.buildbaselinescale', () => {
-  it('returns the (topN + baselineOffset)-th value when enough entries exist', () => {
-    const config = new Config({ topN: 2, baselineOffset: 1 })
-    // 4 entries, topN+offset = 3 → 期望返回第 3 名（idx=2）的值。
+  it('from-delta: baseline = topN_max − valueScaleDelta', () => {
+    const config = new Config({ topN: 2, valueScaleType: 'from-delta', valueScaleDelta: 50 })
     const data: Data[] = [
       createData('A', 0, 100),
       createData('B', 0, 80),
-      createData('C', 0, 60), // ← 3rd
+      createData('C', 0, 60),
       createData('D', 0, 40),
     ]
     const baseline = buildBaselineScale(data, config)
-    expect(baseline(0)).toBe(60)
+    // topN=2 → topN_max=100，baseline = 100 - 50 = 50
+    expect(baseline(0)).toBe(50)
   })
 
-  it('extrapolates below the tail when fewer entries than topN + offset', () => {
-    const config = new Config({ topN: 5, baselineOffset: 2 })
-    // 2 entries, target idx = 7。平均位差 = (100 - 80) / (2 - 1) = 20。
-    // baseline = tail - 20 * (7 - 2) = 80 - 100 = -20。
+  it('from-zero: baseline = 0 regardless of data range', () => {
+    const config = new Config({ topN: 3, valueScaleType: 'from-zero' })
     const data: Data[] = [
       createData('A', 0, 100),
       createData('B', 0, 80),
+      createData('C', 0, 60),
     ]
     const baseline = buildBaselineScale(data, config)
-    expect(baseline(0)).toBeCloseTo(-20, 5)
+    expect(baseline(0)).toBe(0)
   })
 
-  it('falls back to a heuristic for single-entry steps', () => {
-    const config = new Config({ topN: 1, baselineOffset: 1 })
-    // 1 entry, target idx=2，单点情况下用 max(|v|*0.05, 1) 作为位差。
-    const data: Data[] = [createData('A', 0, 100)]
+  it('from-min: baseline = 2·dataMin − dataMax within topN', () => {
+    const config = new Config({ topN: 3, valueScaleType: 'from-min' })
+    const data: Data[] = [
+      createData('A', 0, 100),
+      createData('B', 0, 80),
+      createData('C', 0, 60),
+      createData('D', 0, 40), // 不在 topN 内
+    ]
     const baseline = buildBaselineScale(data, config)
-    // 100 - max(5, 1) * (2 - 1) = 95
-    expect(baseline(0)).toBeCloseTo(95, 5)
+    // topN_min=60, topN_max=100 → baseline = 60 - (100-60) = 20
+    expect(baseline(0)).toBe(20)
   })
 
   it('interpolates baseline between real steps', () => {
-    const config = new Config({ topN: 1, baselineOffset: 1 })
+    const config = new Config({ topN: 2, valueScaleType: 'from-delta', valueScaleDelta: 50 })
     const data: Data[] = [
       createData('A', 0, 100),
       createData('B', 0, 50),
@@ -175,13 +180,13 @@ describe('dataprocessor.buildbaselinescale', () => {
       createData('B', 10, 150),
     ]
     const baseline = buildBaselineScale(data, config)
-    expect(baseline(0)).toBe(50)
-    expect(baseline(10)).toBe(150)
+    expect(baseline(0)).toBe(50) // 100 - 50
+    expect(baseline(10)).toBe(150) // 200 - 50
     expect(baseline(5)).toBeCloseTo(100, 5) // 线性中点
   })
 
   it('clamps outside the real-step range', () => {
-    const config = new Config({ topN: 1, baselineOffset: 1 })
+    const config = new Config({ topN: 2, valueScaleType: 'from-delta', valueScaleDelta: 50 })
     const data: Data[] = [
       createData('A', 0, 100),
       createData('B', 0, 50),
@@ -218,21 +223,21 @@ describe('dataprocessor.sampleatstep', () => {
     expect(early.alpha).toBe(1)
   })
 
-  it('enter region: value ramps from baseline to first.value, alpha 0→1', () => {
+  it('enter region: value ramps from baseline (axis min) to firstValue, alpha 0→1', () => {
     const sampler = makeSampler([[10, 100], [20, 200]])
     const transitionSteps = 4
-    const baseline = 30
+    const baseline = 30 // 模拟当前帧 axis min
     // step = 10 - 2 = 8 → t = 0.5 → eased = 0.5
     const mid = sampleAtStep(sampler, 8, baseline, transitionSteps)
     expect(mid.value).toBeCloseTo(lerp(baseline, 100, 0.5), 5)
     expect(mid.alpha).toBeCloseTo(0.5, 5)
-    // 起点：step = 6 → t = 0 → alpha = 0, value = baseline
+    // 起点：step = 6 → t = 0 → alpha = 0, value = baseline (轴底)
     const start = sampleAtStep(sampler, 6, baseline, transitionSteps)
     expect(start.value).toBeCloseTo(baseline, 5)
     expect(start.alpha).toBeCloseTo(0, 5)
   })
 
-  it('exit region: value ramps from last.value to baseline, alpha 1→0', () => {
+  it('exit region: value ramps from lastValue to baseline (axis min), alpha 1→0', () => {
     const sampler = makeSampler([[0, 100], [10, 50]])
     const transitionSteps = 4
     const baseline = 5
@@ -244,6 +249,44 @@ describe('dataprocessor.sampleatstep', () => {
     const end = sampleAtStep(sampler, 14, baseline, transitionSteps)
     expect(end.value).toBeCloseTo(baseline, 5)
     expect(end.alpha).toBeCloseTo(0, 5)
+  })
+
+  it('carry region: holds lastValue with alpha=1 until carrySteps elapses, then exits to baseline', () => {
+    const sampler = makeSampler([[0, 100], [10, 50]])
+    const transitionSteps = 4
+    const carrySteps = 6
+    const baseline = 5
+    // carry 内：step=10 + 3 → 仍 alpha=1，value=lastValue
+    const inCarry = sampleAtStep(sampler, 13, baseline, transitionSteps, carrySteps)
+    expect(inCarry.value).toBeCloseTo(50, 5)
+    expect(inCarry.alpha).toBe(1)
+    // carry 终点：step=10 + 6 → 仍 alpha=1（边界含）
+    const carryEnd = sampleAtStep(sampler, 16, baseline, transitionSteps, carrySteps)
+    expect(carryEnd.value).toBeCloseTo(50, 5)
+    expect(carryEnd.alpha).toBe(1)
+    // 进入 exit：step = 10 + 6 + 2 → exit t=0.5
+    const exitMid = sampleAtStep(sampler, 18, baseline, transitionSteps, carrySteps)
+    expect(exitMid.value).toBeCloseTo(lerp(50, baseline, 0.5), 5)
+    expect(exitMid.alpha).toBeCloseTo(0.5, 5)
+    // exit 终点：step = 10 + 6 + 4 → alpha=0
+    const exitEnd = sampleAtStep(sampler, 20, baseline, transitionSteps, carrySteps)
+    expect(exitEnd.value).toBeCloseTo(baseline, 5)
+    expect(exitEnd.alpha).toBeCloseTo(0, 5)
+  })
+
+  it('carry boundary: inside↔carry and carry↔exit transitions are continuous', () => {
+    const sampler = makeSampler([[0, 100], [10, 50]])
+    const transitionSteps = 4
+    const carrySteps = 6
+    const baseline = 5
+    const insideEnd = sampleAtStep(sampler, 10, baseline, transitionSteps, carrySteps)
+    const carryStart = sampleAtStep(sampler, 10 + 1e-6, baseline, transitionSteps, carrySteps)
+    expect(insideEnd.value).toBeCloseTo(carryStart.value, 5)
+    expect(insideEnd.alpha).toBeCloseTo(carryStart.alpha, 5)
+    const carryEnd = sampleAtStep(sampler, 16, baseline, transitionSteps, carrySteps)
+    const exitStart = sampleAtStep(sampler, 16 + 1e-6, baseline, transitionSteps, carrySteps)
+    expect(carryEnd.value).toBeCloseTo(exitStart.value, 3)
+    expect(carryEnd.alpha).toBeCloseTo(exitStart.alpha, 3)
   })
 
   it('outside all segments (before first / after last / between long-gap segments): alpha=0, value=baseline', () => {
@@ -271,13 +314,12 @@ describe('dataprocessor.sampleatstep', () => {
     const sampler = makeSampler([[10, 100], [20, 200]])
     const baseline = 30
     const trans = 4
-    // 进入边界 step=10：enter 区间不含 step=first，但 inside 区间含。
-    // 检查 step=10 (inside) 与 step=9.999 (enter) 几乎相等。
+    // 进入边界 step=10：enter 不含 first，inside 含。
     const enterEdge = sampleAtStep(sampler, 10 - 1e-6, baseline, trans)
     const insideEdge = sampleAtStep(sampler, 10, baseline, trans)
     expect(enterEdge.value).toBeCloseTo(insideEdge.value, 3)
     expect(enterEdge.alpha).toBeCloseTo(insideEdge.alpha, 3)
-    // 退出边界 step=20：inside 含，exit 不含 step=last。
+    // 退出边界 step=20：inside 含，exit 不含 last。
     const insideEnd = sampleAtStep(sampler, 20, baseline, trans)
     const exitStart = sampleAtStep(sampler, 20 + 1e-6, baseline, trans)
     expect(insideEnd.value).toBeCloseTo(exitStart.value, 3)
@@ -315,7 +357,7 @@ describe('dataprocessor.fillrank', () => {
       constSampler('beta', 30),
       constSampler('delta', 20),
     ]
-    const frames = fillRank([0], samplers, () => -100, 0, config)
+    const frames = fillRank([0], samplers, () => -100, 0, 0, config)
     expect(frames).toHaveLength(1)
     const [frame] = frames
     expect(frame.map(d => d.id)).toEqual(['beta', 'delta', 'alpha'])
@@ -334,7 +376,7 @@ describe('dataprocessor.fillrank', () => {
       constSampler('d', 20),
       constSampler('e', 10),
     ]
-    const frames = fillRank([0], samplers, () => -100, 0, config)
+    const frames = fillRank([0], samplers, () => -100, 0, 0, config)
     expect(frames[0].map(d => d.rank)).toEqual([0, 1, 2, 2, 2])
     expect(frames[0].map(d => d.blurRank)).toEqual([0, 1, 2, 2, 2])
   })
@@ -354,7 +396,7 @@ describe('dataprocessor.fillrank', () => {
       }],
     }
     const baseline = -5
-    const frames = fillRank([0], [visible, offscreen], () => baseline, 0, config)
+    const frames = fillRank([0], [visible, offscreen], () => baseline, 0, 0, config)
     const [frame] = frames
     const visibleEntry = frame.find(d => d.id === 'alpha')!
     const offscreenEntry = frame.find(d => d.id === 'beta')!
