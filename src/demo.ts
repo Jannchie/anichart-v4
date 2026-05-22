@@ -25,7 +25,6 @@ const config = new Config({
   getValueExtra: data => data.raw.company ?? '',
   getBarInfo: data => data.raw.model ?? data.id,
   title: 'LLM Elo Rating Leaderboard',
-  // xAxisLabel: 'LLM Elo Rating',
 })
 
 type ChartInstance = BarChart | LineChart
@@ -42,7 +41,8 @@ const chartPreferences = {
   },
 } as const
 
-// Prepare base layout
+const SPEED_OPTIONS = [0.25, 0.5, 1, 2, 4] as const
+
 document.documentElement.style.height = '100%'
 document.documentElement.style.margin = '0'
 document.documentElement.style.padding = '0'
@@ -82,47 +82,64 @@ controls.style.bottom = '24px'
 controls.style.transform = 'translateX(-50%)'
 controls.style.display = 'flex'
 controls.style.alignItems = 'center'
-controls.style.gap = '12px'
+controls.style.gap = '10px'
 controls.style.padding = '10px 14px'
 controls.style.background = 'rgba(0, 0, 0, 0.56)'
 controls.style.borderRadius = '12px'
 controls.style.backdropFilter = 'blur(6px)'
 controls.style.boxShadow = '0 6px 18px rgba(0, 0, 0, 0.45)'
+controls.style.userSelect = 'none'
 canvasContainer.append(controls)
 
-const toggleButton = document.createElement('button')
-toggleButton.textContent = '暂停'
-
-function applyButtonStyle(button: HTMLButtonElement) {
-  button.style.padding = '6px 12px'
-  button.style.background = 'rgba(255, 255, 255, 0.12)'
-  button.style.border = '1px solid rgba(255, 255, 255, 0.24)'
-  button.style.borderRadius = '6px'
-  button.style.color = '#ffffff'
-  button.style.fontSize = '14px'
-  button.style.fontFamily = 'inherit'
-  button.style.cursor = 'pointer'
-  button.style.transition = 'opacity 0.2s ease'
+function makeButton(label: string, title: string) {
+  const btn = document.createElement('button')
+  btn.textContent = label
+  btn.title = title
+  btn.style.padding = '4px 10px'
+  btn.style.minWidth = '34px'
+  btn.style.height = '30px'
+  btn.style.background = 'rgba(255, 255, 255, 0.12)'
+  btn.style.border = '1px solid rgba(255, 255, 255, 0.24)'
+  btn.style.borderRadius = '6px'
+  btn.style.color = '#ffffff'
+  btn.style.fontSize = '14px'
+  btn.style.fontFamily = 'inherit'
+  btn.style.cursor = 'pointer'
+  btn.style.transition = 'background 0.15s ease'
+  btn.addEventListener('mouseenter', () => {
+    btn.style.background = 'rgba(255, 255, 255, 0.22)'
+  })
+  btn.addEventListener('mouseleave', () => {
+    btn.style.background = 'rgba(255, 255, 255, 0.12)'
+  })
+  return btn
 }
 
-applyButtonStyle(toggleButton)
+function makeSelect() {
+  const sel = document.createElement('select')
+  sel.style.padding = '4px 8px'
+  sel.style.height = '30px'
+  sel.style.background = 'rgba(255, 255, 255, 0.12)'
+  sel.style.border = '1px solid rgba(255, 255, 255, 0.24)'
+  sel.style.borderRadius = '6px'
+  sel.style.color = '#ffffff'
+  sel.style.fontSize = '13px'
+  sel.style.fontFamily = 'inherit'
+  sel.style.cursor = 'pointer'
+  return sel
+}
 
-const chartSelect = document.createElement('select')
-chartSelect.style.padding = '6px 12px'
-chartSelect.style.background = 'rgba(255, 255, 255, 0.12)'
-chartSelect.style.border = '1px solid rgba(255, 255, 255, 0.24)'
-chartSelect.style.borderRadius = '6px'
-chartSelect.style.color = '#ffffff'
-chartSelect.style.fontSize = '14px'
-chartSelect.style.fontFamily = 'inherit'
-chartSelect.style.cursor = 'pointer'
-chartSelect.style.height = '32px'
-
-const barOption = new Option('Bar Chart', 'bar')
-const lineOption = new Option('Line Chart', 'line')
-chartSelect.add(barOption)
-chartSelect.add(lineOption)
+const chartSelect = makeSelect()
+chartSelect.add(new Option('Bar', 'bar'))
+chartSelect.add(new Option('Line', 'line'))
 chartSelect.value = 'bar'
+chartSelect.title = '图表类型'
+
+const firstFrameBtn = makeButton('⏮', '跳到首帧 (Home)')
+const prevFrameBtn = makeButton('◀', '后退一帧 (← / Shift+← 跳 10 帧)')
+const toggleButton = makeButton('⏸', '暂停 / 继续 (Space)')
+const nextFrameBtn = makeButton('▶', '前进一帧 (→ / Shift+→ 跳 10 帧)')
+const lastFrameBtn = makeButton('⏭', '跳到末帧 (End)')
 
 const progress = document.createElement('input')
 progress.type = 'range'
@@ -133,7 +150,41 @@ progress.step = '1'
 progress.style.width = '260px'
 progress.style.cursor = 'pointer'
 
-controls.append(chartSelect, toggleButton, progress)
+const timeLabel = document.createElement('span')
+timeLabel.textContent = '00:00 / 00:00'
+timeLabel.style.fontSize = '13px'
+timeLabel.style.minWidth = '110px'
+timeLabel.style.textAlign = 'center'
+timeLabel.style.fontVariantNumeric = 'tabular-nums'
+
+const frameLabel = document.createElement('span')
+frameLabel.textContent = 'f0 / f0'
+frameLabel.style.fontSize = '13px'
+frameLabel.style.minWidth = '110px'
+frameLabel.style.textAlign = 'center'
+frameLabel.style.fontVariantNumeric = 'tabular-nums'
+frameLabel.style.color = '#9aa0a6'
+frameLabel.title = '当前帧 / 总帧数'
+
+const speedSelect = makeSelect()
+for (const s of SPEED_OPTIONS) {
+  speedSelect.add(new Option(`${s}x`, s.toString()))
+}
+speedSelect.value = '1'
+speedSelect.title = '播放速率 ([ / ])'
+
+controls.append(
+  chartSelect,
+  firstFrameBtn,
+  prevFrameBtn,
+  toggleButton,
+  nextFrameBtn,
+  lastFrameBtn,
+  progress,
+  timeLabel,
+  frameLabel,
+  speedSelect,
+)
 
 let data: RankedData[][] = []
 let chart: ChartInstance | null = null
@@ -142,6 +193,9 @@ let isPaused = false
 let currentFrame = 0
 let resumeAfterScrub = false
 let chartType: 'bar' | 'line' = 'bar'
+let speed = 1
+let frameAccumulator = 0
+let lastLoopTime = 0
 
 const clampSize = (value: number) => Math.max(1, Math.floor(value))
 
@@ -156,17 +210,36 @@ function getContainerSize() {
 function applyConfigSize(width: number, height: number) {
   config.canvasWidth = width
   config.canvasHeight = height
-  // Keep a small padding to match default positioning
   config.width = Math.max(width - 20, 0)
   config.height = Math.max(height - 20, 0)
 }
 
+function formatTime(frame: number, fps: number) {
+  const totalSec = Math.max(0, frame) / fps
+  const min = Math.floor(totalSec / 60)
+  const sec = Math.floor(totalSec % 60)
+  return `${min.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`
+}
+
+function syncTimeLabel() {
+  const fps = config.fps
+  const total = Math.max(data.length - 1, 0)
+  timeLabel.textContent = `${formatTime(currentFrame, fps)} / ${formatTime(total, fps)}`
+  frameLabel.textContent = `f${currentFrame} / f${total}`
+}
+
 function syncButtonState() {
-  toggleButton.textContent = isPaused ? '继续' : '暂停'
+  toggleButton.textContent = isPaused ? '▶' : '⏸'
+  toggleButton.title = isPaused ? '继续 (Space)' : '暂停 (Space)'
 }
 
 function setPauseState(paused: boolean) {
   isPaused = paused
+  if (!paused) {
+    // 切到播放时重置累积器，避免长时间暂停后一次性吃帧
+    frameAccumulator = 0
+    lastLoopTime = performance.now()
+  }
   syncButtonState()
 }
 
@@ -178,6 +251,16 @@ function renderFrame(frame: number) {
   chart.update(safeFrame)
   progress.value = safeFrame.toString()
   currentFrame = safeFrame
+  syncTimeLabel()
+}
+
+function stepBy(delta: number) {
+  if (data.length === 0) {
+    return
+  }
+  setPauseState(true)
+  const next = Math.min(Math.max(currentFrame + delta, 0), data.length - 1)
+  renderFrame(next)
 }
 
 function rebuildChart() {
@@ -201,16 +284,60 @@ function rebuildChart() {
   renderFrame(currentFrame)
 }
 
-function loop() {
+function loop(now: number) {
+  if (lastLoopTime === 0) {
+    lastLoopTime = now
+  }
+  const dt = (now - lastLoopTime) / 1000
+  lastLoopTime = now
+
   if (!isPaused && data.length > 0) {
-    renderFrame(currentFrame)
-    currentFrame = (currentFrame + 1) % data.length
+    frameAccumulator += dt * config.fps * speed
+    const framesToAdvance = Math.floor(frameAccumulator)
+    if (framesToAdvance > 0) {
+      frameAccumulator -= framesToAdvance
+      let nextFrame = currentFrame + framesToAdvance
+      if (nextFrame >= data.length) {
+        nextFrame = nextFrame % data.length
+      }
+      renderFrame(nextFrame)
+    }
   }
   animationFrameId = requestAnimationFrame(loop)
 }
 
+function adjustSpeed(direction: 1 | -1) {
+  const currentIdx = SPEED_OPTIONS.findIndex(s => s === speed)
+  const nextIdx = Math.min(SPEED_OPTIONS.length - 1, Math.max(0, currentIdx + direction))
+  if (nextIdx !== currentIdx) {
+    speed = SPEED_OPTIONS[nextIdx]
+    speedSelect.value = speed.toString()
+  }
+}
+
 toggleButton.addEventListener('click', () => {
   setPauseState(!isPaused)
+})
+
+firstFrameBtn.addEventListener('click', () => {
+  setPauseState(true)
+  renderFrame(0)
+})
+
+lastFrameBtn.addEventListener('click', () => {
+  setPauseState(true)
+  renderFrame(data.length - 1)
+})
+
+prevFrameBtn.addEventListener('click', () => stepBy(-1))
+nextFrameBtn.addEventListener('click', () => stepBy(1))
+
+speedSelect.addEventListener('change', () => {
+  const next = Number(speedSelect.value)
+  if (Number.isFinite(next) && next > 0) {
+    speed = next
+    frameAccumulator = 0
+  }
 })
 
 progress.addEventListener('pointerdown', () => {
@@ -249,6 +376,48 @@ chartSelect.addEventListener('change', () => {
   rebuildChart()
 })
 
+window.addEventListener('keydown', (e) => {
+  const target = e.target as HTMLElement | null
+  if (target && (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'TEXTAREA')) {
+    return
+  }
+  if (data.length === 0) {
+    return
+  }
+  switch (e.code) {
+    case 'Space':
+      e.preventDefault()
+      setPauseState(!isPaused)
+      break
+    case 'ArrowLeft':
+      e.preventDefault()
+      stepBy(e.shiftKey ? -10 : -1)
+      break
+    case 'ArrowRight':
+      e.preventDefault()
+      stepBy(e.shiftKey ? 10 : 1)
+      break
+    case 'Home':
+      e.preventDefault()
+      setPauseState(true)
+      renderFrame(0)
+      break
+    case 'End':
+      e.preventDefault()
+      setPauseState(true)
+      renderFrame(data.length - 1)
+      break
+    case 'BracketLeft':
+      e.preventDefault()
+      adjustSpeed(-1)
+      break
+    case 'BracketRight':
+      e.preventDefault()
+      adjustSpeed(1)
+      break
+  }
+})
+
 function handleResize() {
   const { width, height } = getContainerSize()
   applyConfigSize(width, height)
@@ -283,10 +452,12 @@ function handleResize() {
     renderFrame(currentFrame)
     setPauseState(false)
     syncButtonState()
+    syncTimeLabel()
     if (animationFrameId !== undefined) {
       cancelAnimationFrame(animationFrameId)
     }
-    loop()
+    lastLoopTime = 0
+    animationFrameId = requestAnimationFrame(loop)
   }
   catch (error) {
     console.error('Failed to load demo:', error)

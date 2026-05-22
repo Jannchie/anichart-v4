@@ -1,23 +1,57 @@
-import type { ScaleLinear } from 'd3'
 import type { Data, RankedData } from '../Data'
 import { describe, expect, it } from 'vitest'
 import { Config } from '../Config'
 import { DataProcessor } from '../DataProcessor'
 
-type LinearScale = ScaleLinear<Data, Data>
+interface Segment {
+  firstStep: number
+  lastStep: number
+  points: Data[]
+}
 
-const getScaleMap = (DataProcessor as any).getScaleMap as (
-  idGroups: Map<string, Data[]>,
-  endStep: number,
-  stepSec: number,
+interface Sampler {
+  id: string
+  label: string
+  segments: Segment[]
+}
+
+interface SampleResult {
+  value: number
+  alpha: number
+  raw: any
+}
+
+const buildSamplers = (DataProcessor as any).buildSamplers as (
+  data: Data[],
   config: Config,
-  startStep: number,
-  transitionDurationSec: number,
-) => Map<string, LinearScale>
+  stepSec: number,
+) => Sampler[]
+
+const buildBaselineScale = (DataProcessor as any).buildBaselineScale as (
+  data: Data[],
+  config: Config,
+) => (step: number) => number
+
+const sampleAtStep = (DataProcessor as any).sampleAtStep as (
+  sampler: Sampler,
+  step: number,
+  baseline: number,
+  transitionSteps: number,
+) => SampleResult
+
+const fillRank = (DataProcessor as any).fillRank as (
+  stepList: number[],
+  samplers: Sampler[],
+  baselineScale: (step: number) => number,
+  transitionSteps: number,
+  config: Config,
+) => RankedData[][]
+
 const addTailingFrames = (DataProcessor as any).addTailingFrames as (
   config: Config,
   result: RankedData[][],
 ) => void
+
 const preprocess = (DataProcessor as any).preprocess as (
   rawData: any,
   config: Config,
@@ -36,240 +70,316 @@ function createData(id: string, step: number, value: number, overrides: Partial<
   return Object.assign(base, overrides)
 }
 
-describe('dataprocessor.getscalemap', () => {
-  it('inserts exit placeholders when the final data point exceeds the retention window', () => {
+const easeInOutCubic = (x: number): number =>
+  x < 0.5 ? 4 * x * x * x : 1 - ((-2 * x + 2) ** 3) / 2
+const lerp = (a: number, b: number, t: number): number => a + (b - a) * t
+
+describe('dataprocessor.buildsamplers', () => {
+  it('keeps consecutive points (gap ≤ maxRetentionTimeSec) in one segment', () => {
     const id = 'alpha'
     const data: Data[] = [
       createData(id, 0, 10),
       createData(id, 2, 12),
       createData(id, 4, 14),
     ]
-    const config = new Config()
-    const transitionDurationSec = Math.min(config.transitionDurationSec, config.maxRetentionTimeSec / 2)
-    const stepSec = 1
-    const retentionSteps = config.maxRetentionTimeSec / stepSec
-    const transitionSteps = transitionDurationSec / stepSec
-    const endStep = data.at(-1)!.step + retentionSteps + transitionSteps
-    const scaleMap = getScaleMap(new Map([[id, data]]) as any, endStep, stepSec, config, 0, transitionDurationSec)
-    const scale = scaleMap.get(id)
-    expect(scale).toBeDefined()
-    const domain = scale!.domain()
-    const range = scale!.range()
-    expect(domain).toEqual([
-      0,
-      2,
-      4,
-      4 + transitionSteps,
-      4 + transitionSteps * 2,
-      endStep,
-    ])
-    expect(range).toHaveLength(6)
-    const exitNode = range[3]
-    expect(Number.isNaN(exitNode.value)).toBe(true)
-    expect(exitNode.alpha).toBe(0)
-    expect(exitNode.up).toBe(false)
-    expect(exitNode.step).toBeCloseTo(4 + transitionSteps)
-    const fadeNode = range[4]
-    expect(fadeNode.step).toBeCloseTo(4 + transitionSteps * 2)
-    expect(Number.isNaN(fadeNode.value)).toBe(true)
-    expect(fadeNode.alpha).toBe(0)
-    expect(fadeNode.up).toBe(false)
-    const trailingNode = range[5]
-    expect(Number.isNaN(trailingNode.value)).toBe(true)
-    expect(trailingNode.alpha).toBe(0)
-    expect(trailingNode.step).toBe(endStep)
+    const config = new Config({ maxRetentionTimeSec: 5 })
+    const samplers = buildSamplers(data, config, 1)
+    expect(samplers).toHaveLength(1)
+    expect(samplers[0].segments).toHaveLength(1)
+    expect(samplers[0].segments[0].firstStep).toBe(0)
+    expect(samplers[0].segments[0].lastStep).toBe(4)
+    expect(samplers[0].segments[0].points).toHaveLength(3)
   })
 
-  it('fills long gaps with decay and entry placeholders', () => {
+  it('splits into multiple segments when gap exceeds maxRetentionTimeSec', () => {
     const id = 'beta'
     const data: Data[] = [
       createData(id, 0, 10),
-      createData(id, 10, 20),
+      createData(id, 2, 12),
+      createData(id, 20, 30),
+      createData(id, 22, 32),
     ]
-    const config = new Config()
-    const transitionDurationSec = Math.min(config.transitionDurationSec, config.maxRetentionTimeSec / 2)
-    const scaleMap = getScaleMap(new Map([[id, data]]) as any, 10, 1, config, 0, transitionDurationSec)
-    const scale = scaleMap.get(id)
-    expect(scale).toBeDefined()
-    const domain = scale!.domain()
-    const range = scale!.range()
-    expect(domain).toEqual([
-      0,
-      transitionDurationSec,
-      config.maxRetentionTimeSec,
-      10 - transitionDurationSec,
-      10,
-    ])
-    const decayNode = range[1]
-    expect(Number.isNaN(decayNode.value)).toBe(true)
-    expect(decayNode.alpha).toBe(0)
-    expect(decayNode.up).toBe(false)
-    const middleNode = range[2]
-    expect(middleNode.step).toBeCloseTo(config.maxRetentionTimeSec)
-    expect(Number.isNaN(middleNode.value)).toBe(true)
-    expect(middleNode.up).toBe(false)
-    const entryNode = range[3]
-    expect(entryNode.step).toBeCloseTo(10 - transitionDurationSec)
-    expect(Number.isNaN(entryNode.value)).toBe(true)
-    expect(entryNode.up).toBe(true)
+    const config = new Config({ maxRetentionTimeSec: 5 })
+    const samplers = buildSamplers(data, config, 1)
+    expect(samplers[0].segments).toHaveLength(2)
+    expect(samplers[0].segments[0].lastStep).toBe(2)
+    expect(samplers[0].segments[1].firstStep).toBe(20)
   })
 
-  it('surrounds nan values with transition nodes from neighboring data', () => {
+  it('drops NaN points (alpha=0 from preprocess) before segmenting', () => {
     const id = 'gamma'
-    const nanValue = Number.NaN
+    // 真实点：step=0, 6（短 gap 内）；中间 step=5 是 NaN，应被剔除。
     const data: Data[] = [
       createData(id, 0, 30),
-      createData(id, 5, nanValue),
+      createData(id, 5, 0, { alpha: 0 }),
       createData(id, 6, 40),
     ]
-    const config = new Config()
-    const transitionDurationSec = Math.min(config.transitionDurationSec, config.maxRetentionTimeSec / 2)
-    const scaleMap = getScaleMap(new Map([[id, data]]) as any, 6, 1, config, 0, transitionDurationSec)
-    const scale = scaleMap.get(id)
-    expect(scale).toBeDefined()
-    const domain = scale!.domain()
-    const range = scale!.range()
-    expect(domain).toEqual([
-      0,
-      transitionDurationSec,
-      5,
-      6 - transitionDurationSec,
-      6,
-    ])
-    const exitNode = range[1]
-    expect(Number.isNaN(exitNode.value)).toBe(true)
-    expect(exitNode.up).toBe(false)
-    expect(exitNode.alpha).toBe(0)
-    const nanNode = range[2]
-    expect(Number.isNaN(nanNode.value)).toBe(true)
-    const entryNode = range[3]
-    expect(Number.isNaN(entryNode.value)).toBe(true)
-    expect(entryNode.alpha).toBe(0)
-    expect(entryNode.up).toBe(true)
+    const config = new Config({ maxRetentionTimeSec: 10 })
+    const samplers = buildSamplers(data, config, 1)
+    expect(samplers[0].segments).toHaveLength(1)
+    expect(samplers[0].segments[0].points.map(p => p.step)).toEqual([0, 6])
   })
 
-  it('does not mutate the original id group array', () => {
-    const id = 'delta'
-    const originalGroup = [
-      createData(id, 0, 3),
-      createData(id, 1, 5),
-    ]
-    const snapshot = originalGroup.map(d => ({ ...d }))
-    const config = new Config()
-    const transitionDurationSec = Math.min(config.transitionDurationSec, config.maxRetentionTimeSec / 2)
-    const scaleMap = getScaleMap(new Map([[id, originalGroup]]) as any, 2, 1, config, 0, transitionDurationSec)
-    expect(scaleMap.get(id)).toBeDefined()
-    expect(originalGroup).toHaveLength(snapshot.length)
-    for (const [index, item] of originalGroup.entries()) {
-      expect(item).toStrictEqual(snapshot[index])
-    }
-  })
-
-  it('keeps the original domain when gaps stay within retention window', () => {
-    const id = 'epsilon'
+  it('skips ids whose every point is NaN', () => {
     const data: Data[] = [
-      createData(id, 0, 5),
-      createData(id, 1, 7),
-      createData(id, 2, 9),
+      createData('x', 0, 0, { alpha: 0 }),
+      createData('x', 1, 0, { alpha: 0 }),
     ]
     const config = new Config()
-    const transitionDurationSec = Math.min(config.transitionDurationSec, config.maxRetentionTimeSec / 2)
-    const scaleMap = getScaleMap(new Map([[id, data]]) as any, 2, 1, config, 0, transitionDurationSec)
-    const scale = scaleMap.get(id)
-    expect(scale).toBeDefined()
-    expect(scale!.domain()).toEqual([0, 1, 2])
-    expect(scale!.range()).toHaveLength(3)
-  })
-
-  it('adds an entry transition when the first point is nan', () => {
-    const id = 'zeta'
-    const data: Data[] = [
-      createData(id, 0, Number.NaN, { alpha: 0 }),
-      createData(id, 4, 12),
-    ]
-    const config = new Config()
-    const transitionDurationSec = Math.min(config.transitionDurationSec, config.maxRetentionTimeSec / 2)
-    const stepSec = 1
-    const transitionSteps = transitionDurationSec / stepSec
-    const scaleMap = getScaleMap(new Map([[id, data]]) as any, 4, stepSec, config, 0, transitionDurationSec)
-    const scale = scaleMap.get(id)
-    expect(scale).toBeDefined()
-    const domain = scale!.domain()
-    expect(domain.at(0)).toBe(0)
-    expect(domain.at(1)).toBeCloseTo(4 - transitionSteps)
-    const range = scale!.range()
-    const transitionNode = range[1]
-    expect(Number.isNaN(transitionNode.value)).toBe(true)
-    expect(transitionNode.up).toBe(true)
-    expect(transitionNode.alpha).toBe(0)
-  })
-
-  it('prefers the nearest raw snapshot during interpolation', () => {
-    const id = 'eta'
-    const a = createData(id, 0, 10, { raw: { source: 'a' } })
-    const b = createData(id, 10, 20, { raw: { source: 'b' } })
-    const config = new Config({ maxRetentionTimeSec: 100 })
-    const transitionDurationSec = Math.min(config.transitionDurationSec, config.maxRetentionTimeSec / 2)
-    const scaleMap = getScaleMap(new Map([[id, [a, b]]]) as any, 10, 1, config, 0, transitionDurationSec)
-    const scale = scaleMap.get(id)
-    expect(scale).toBeDefined()
-    const interpolated = scale!(7)
-    expect(interpolated.raw).toEqual({ source: 'b' })
-    expect(interpolated.raw).not.toBe(b.raw)
-    const nearStart = scale!(2)
-    expect(nearStart.raw).toEqual({ source: 'a' })
-    expect(nearStart.raw).not.toBe(a.raw)
+    const samplers = buildSamplers(data, config, 1)
+    expect(samplers).toHaveLength(0)
   })
 })
 
-function createConstantScale(data: Data | undefined): LinearScale {
-  const scale = ((_: number) => data) as unknown as LinearScale
-  return scale
-}
+describe('dataprocessor.buildbaselinescale', () => {
+  it('returns the (topN + baselineOffset)-th value when enough entries exist', () => {
+    const config = new Config({ topN: 2, baselineOffset: 1 })
+    // 4 entries, topN+offset = 3 → 期望返回第 3 名（idx=2）的值。
+    const data: Data[] = [
+      createData('A', 0, 100),
+      createData('B', 0, 80),
+      createData('C', 0, 60), // ← 3rd
+      createData('D', 0, 40),
+    ]
+    const baseline = buildBaselineScale(data, config)
+    expect(baseline(0)).toBe(60)
+  })
+
+  it('extrapolates below the tail when fewer entries than topN + offset', () => {
+    const config = new Config({ topN: 5, baselineOffset: 2 })
+    // 2 entries, target idx = 7。平均位差 = (100 - 80) / (2 - 1) = 20。
+    // baseline = tail - 20 * (7 - 2) = 80 - 100 = -20。
+    const data: Data[] = [
+      createData('A', 0, 100),
+      createData('B', 0, 80),
+    ]
+    const baseline = buildBaselineScale(data, config)
+    expect(baseline(0)).toBeCloseTo(-20, 5)
+  })
+
+  it('falls back to a heuristic for single-entry steps', () => {
+    const config = new Config({ topN: 1, baselineOffset: 1 })
+    // 1 entry, target idx=2，单点情况下用 max(|v|*0.05, 1) 作为位差。
+    const data: Data[] = [createData('A', 0, 100)]
+    const baseline = buildBaselineScale(data, config)
+    // 100 - max(5, 1) * (2 - 1) = 95
+    expect(baseline(0)).toBeCloseTo(95, 5)
+  })
+
+  it('interpolates baseline between real steps', () => {
+    const config = new Config({ topN: 1, baselineOffset: 1 })
+    const data: Data[] = [
+      createData('A', 0, 100),
+      createData('B', 0, 50),
+      createData('A', 10, 200),
+      createData('B', 10, 150),
+    ]
+    const baseline = buildBaselineScale(data, config)
+    expect(baseline(0)).toBe(50)
+    expect(baseline(10)).toBe(150)
+    expect(baseline(5)).toBeCloseTo(100, 5) // 线性中点
+  })
+
+  it('clamps outside the real-step range', () => {
+    const config = new Config({ topN: 1, baselineOffset: 1 })
+    const data: Data[] = [
+      createData('A', 0, 100),
+      createData('B', 0, 50),
+      createData('A', 10, 200),
+      createData('B', 10, 150),
+    ]
+    const baseline = buildBaselineScale(data, config)
+    expect(baseline(-5)).toBe(50)
+    expect(baseline(20)).toBe(150)
+  })
+})
+
+describe('dataprocessor.sampleatstep', () => {
+  const makeSampler = (points: Array<[number, number]>): Sampler => ({
+    id: 'A',
+    label: 'A',
+    segments: [{
+      firstStep: points[0][0],
+      lastStep: points.at(-1)![0],
+      points: points.map(([step, value]) => createData('A', step, value)),
+    }],
+  })
+
+  it('returns inside-segment piecewise easing interpolation with alpha=1', () => {
+    const sampler = makeSampler([[0, 10], [10, 20]])
+    const mid = sampleAtStep(sampler, 5, 0, 2)
+    // ease(0.5) = 0.5 → value = (10 + 20) / 2 = 15
+    expect(mid.value).toBeCloseTo(15, 5)
+    expect(mid.alpha).toBe(1)
+
+    const early = sampleAtStep(sampler, 2.5, 0, 2)
+    // ease(0.25) ≈ 0.0625 → value ≈ 10 + 10 * 0.0625 = 10.625
+    expect(early.value).toBeCloseTo(lerp(10, 20, easeInOutCubic(0.25)), 5)
+    expect(early.alpha).toBe(1)
+  })
+
+  it('enter region: value ramps from baseline to first.value, alpha 0→1', () => {
+    const sampler = makeSampler([[10, 100], [20, 200]])
+    const transitionSteps = 4
+    const baseline = 30
+    // step = 10 - 2 = 8 → t = 0.5 → eased = 0.5
+    const mid = sampleAtStep(sampler, 8, baseline, transitionSteps)
+    expect(mid.value).toBeCloseTo(lerp(baseline, 100, 0.5), 5)
+    expect(mid.alpha).toBeCloseTo(0.5, 5)
+    // 起点：step = 6 → t = 0 → alpha = 0, value = baseline
+    const start = sampleAtStep(sampler, 6, baseline, transitionSteps)
+    expect(start.value).toBeCloseTo(baseline, 5)
+    expect(start.alpha).toBeCloseTo(0, 5)
+  })
+
+  it('exit region: value ramps from last.value to baseline, alpha 1→0', () => {
+    const sampler = makeSampler([[0, 100], [10, 50]])
+    const transitionSteps = 4
+    const baseline = 5
+    // step = 10 + 2 = 12 → t = 0.5
+    const mid = sampleAtStep(sampler, 12, baseline, transitionSteps)
+    expect(mid.value).toBeCloseTo(lerp(50, baseline, 0.5), 5)
+    expect(mid.alpha).toBeCloseTo(0.5, 5)
+    // 终点：step = 14 → t = 1 → alpha = 0, value = baseline
+    const end = sampleAtStep(sampler, 14, baseline, transitionSteps)
+    expect(end.value).toBeCloseTo(baseline, 5)
+    expect(end.alpha).toBeCloseTo(0, 5)
+  })
+
+  it('outside all segments (before first / after last / between long-gap segments): alpha=0, value=baseline', () => {
+    const sampler: Sampler = {
+      id: 'A',
+      label: 'A',
+      segments: [
+        { firstStep: 10, lastStep: 12, points: [createData('A', 10, 100), createData('A', 12, 110)] },
+        { firstStep: 30, lastStep: 32, points: [createData('A', 30, 200), createData('A', 32, 210)] },
+      ],
+    }
+    // 长 gap 中段（远离任何 transition）
+    const between = sampleAtStep(sampler, 20, 42, 2)
+    expect(between.value).toBeCloseTo(42, 5)
+    expect(between.alpha).toBe(0)
+    // 首段之前（远离 enter transition）
+    const before = sampleAtStep(sampler, 0, 42, 2)
+    expect(before.alpha).toBe(0)
+    // 末段之后（远离 exit transition）
+    const after = sampleAtStep(sampler, 50, 42, 2)
+    expect(after.alpha).toBe(0)
+  })
+
+  it('value is continuous across enter ↔ inside ↔ exit boundaries', () => {
+    const sampler = makeSampler([[10, 100], [20, 200]])
+    const baseline = 30
+    const trans = 4
+    // 进入边界 step=10：enter 区间不含 step=first，但 inside 区间含。
+    // 检查 step=10 (inside) 与 step=9.999 (enter) 几乎相等。
+    const enterEdge = sampleAtStep(sampler, 10 - 1e-6, baseline, trans)
+    const insideEdge = sampleAtStep(sampler, 10, baseline, trans)
+    expect(enterEdge.value).toBeCloseTo(insideEdge.value, 3)
+    expect(enterEdge.alpha).toBeCloseTo(insideEdge.alpha, 3)
+    // 退出边界 step=20：inside 含，exit 不含 step=last。
+    const insideEnd = sampleAtStep(sampler, 20, baseline, trans)
+    const exitStart = sampleAtStep(sampler, 20 + 1e-6, baseline, trans)
+    expect(insideEnd.value).toBeCloseTo(exitStart.value, 3)
+    expect(insideEnd.alpha).toBeCloseTo(exitStart.alpha, 3)
+  })
+
+  it('inside segment uses nearest raw based on local t', () => {
+    const a = createData('A', 0, 10, { raw: { source: 'a' } })
+    const b = createData('A', 10, 20, { raw: { source: 'b' } })
+    const sampler: Sampler = {
+      id: 'A',
+      label: 'A',
+      segments: [{ firstStep: 0, lastStep: 10, points: [a, b] }],
+    }
+    expect(sampleAtStep(sampler, 7, 0, 0).raw).toEqual({ source: 'b' })
+    expect(sampleAtStep(sampler, 2, 0, 0).raw).toEqual({ source: 'a' })
+  })
+})
 
 describe('dataprocessor.fillrank', () => {
-  const fillRank = (DataProcessor as any).fillRank as (
-    stepList: number[],
-    scaleMap: Map<string, LinearScale>,
-    config: Config,
-  ) => any[][]
+  const constSampler = (id: string, value: number): Sampler => ({
+    id,
+    label: id,
+    segments: [{
+      firstStep: 0,
+      lastStep: 10,
+      points: [createData(id, 0, value), createData(id, 10, value)],
+    }],
+  })
 
-  it('orders entries by value and keeps topn plus one extra', () => {
+  it('orders all bars by value desc and parks rank>=topN at config.topN', () => {
     const config = new Config({ topN: 2 })
-    const stepList = [0]
-    const scales = new Map<string, LinearScale>([
-      ['alpha', createConstantScale(createData('alpha', 0, 12))],
-      ['beta', createConstantScale(createData('beta', 0, 30))],
-      ['gamma', createConstantScale(createData('gamma', 0, Number.NaN))],
-      ['delta', createConstantScale(createData('delta', 0, 20))],
-    ])
-    const frames = fillRank(stepList, scales, config)
+    const samplers: Sampler[] = [
+      constSampler('alpha', 12),
+      constSampler('beta', 30),
+      constSampler('delta', 20),
+    ]
+    const frames = fillRank([0], samplers, () => -100, 0, config)
     expect(frames).toHaveLength(1)
     const [frame] = frames
-    expect(frame).toHaveLength(config.topN + 1)
-    const values = frame.map(d => d.value)
-    expect(values).toEqual([30, 20, 12])
-    for (const [index, item] of frame.entries()) {
-      expect(item.rank).toBe(index)
+    expect(frame.map(d => d.id)).toEqual(['beta', 'delta', 'alpha'])
+    expect(frame[0].rank).toBe(0)
+    expect(frame[1].rank).toBe(1)
+    expect(frame[2].rank).toBe(config.topN)
+  })
+
+  it('clamps rank beyond topN to topN (parking 槽)', () => {
+    // topN 内 unique 0..topN-1，topN 外全部停在 rank=topN（画面外一格）。
+    const config = new Config({ topN: 2 })
+    const samplers: Sampler[] = [
+      constSampler('a', 50),
+      constSampler('b', 40),
+      constSampler('c', 30),
+      constSampler('d', 20),
+      constSampler('e', 10),
+    ]
+    const frames = fillRank([0], samplers, () => -100, 0, config)
+    expect(frames[0].map(d => d.rank)).toEqual([0, 1, 2, 2, 2])
+    expect(frames[0].map(d => d.blurRank)).toEqual([0, 1, 2, 2, 2])
+  })
+
+  it('keeps an absent-segment bar (alpha=0) at parkRank with value=baseline', () => {
+    // topN=1，2 个 sampler：alpha=1 的 alpha 占 rank=0；beta 在段外 alpha=0
+    // 落到 idx=1，parked 到 config.topN=1。
+    const config = new Config({ topN: 1 })
+    const visible = constSampler('alpha', 50)
+    const offscreen: Sampler = {
+      id: 'beta',
+      label: 'beta',
+      segments: [{
+        firstStep: 100,
+        lastStep: 110,
+        points: [createData('beta', 100, 999)],
+      }],
     }
-    const ids = frame.map(d => d.id)
-    expect(ids).not.toContain('gamma')
+    const baseline = -5
+    const frames = fillRank([0], [visible, offscreen], () => baseline, 0, config)
+    const [frame] = frames
+    const visibleEntry = frame.find(d => d.id === 'alpha')!
+    const offscreenEntry = frame.find(d => d.id === 'beta')!
+    expect(visibleEntry.rank).toBe(0)
+    expect(visibleEntry.alpha).toBe(1)
+    expect(offscreenEntry.rank).toBe(config.topN)
+    expect(offscreenEntry.alpha).toBe(0)
+    expect(offscreenEntry.value).toBe(baseline)
   })
 })
 
 describe('dataprocessor.addtailingframes', () => {
-  it('clamps alpha values within valid bounds after smoothing', () => {
+  it('alpha 由 applyVelocity 按 blurRank 改写：parking (blurRank=topN) → alpha=0', () => {
+    // 新设计：alpha 由 topN-blurRank clamp 决定，不再由 sampler 持有。
     const config = new Config({ topN: 2, swapDurationSec: 1, fps: 2 })
     const createRanked = (step: number): RankedData => ({
       id: 'alpha',
       label: 'alpha',
       value: 10,
       step,
-      alpha: 1,
+      alpha: 1, // 起始值无意义，会被 applyVelocity 覆盖
       raw: { id: 'alpha', step },
       up: false,
-      rank: config.topN + 2,
-      blurRank: config.topN + 2,
+      rank: config.topN, // 停在 parking
+      blurRank: config.topN,
     })
     const result: RankedData[][] = [
       [createRanked(0)],
@@ -278,12 +388,325 @@ describe('dataprocessor.addtailingframes', () => {
 
     addTailingFrames(config, result)
     const alphas = result.flat().map(d => d.alpha)
-
     for (const value of alphas) {
-      expect(value).toBeGreaterThanOrEqual(0)
-      expect(value).toBeLessThanOrEqual(1)
+      expect(value).toBe(0)
     }
-    expect(alphas).toContain(0)
+  })
+})
+
+describe('dataprocessor.applyvelocity', () => {
+  const makeRanked = (
+    id: string,
+    rank: number,
+    overrides: Partial<RankedData> = {},
+  ): RankedData => ({
+    id,
+    label: id,
+    value: overrides.value ?? 100 - rank,
+    step: overrides.step ?? 0,
+    alpha: overrides.alpha ?? 1,
+    raw: overrides.raw ?? { id },
+    up: overrides.up ?? false,
+    rank,
+    blurRank: 0,
+    ...overrides,
+  })
+
+  type RankTuple = [string, number] | [string, number, number]
+  const buildSegment = (
+    fromStep: number,
+    toStep: number,
+    frames: number,
+    ranksAt: (frameIdx: number) => RankTuple[],
+  ): RankedData[][] => {
+    const out: RankedData[][] = []
+    for (let i = 0; i < frames; i++) {
+      const t = frames > 1 ? i / (frames - 1) : 0
+      const step = fromStep + t * (toStep - fromStep)
+      out.push(ranksAt(i).map((tuple) => {
+        const [id, rank, value] = tuple
+        return makeRanked(id, rank, value === undefined ? { step } : { step, value })
+      }))
+    }
+    return out
+  }
+
+  it('stationary: no rank change → blurRank ≡ rank', () => {
+    const config = new Config({ topN: 5, swapDurationSec: 0.5, fps: 60 })
+    const result = buildSegment(0, 1, 30, () => [['A', 0, 100], ['B', 1, 80], ['C', 2, 60]])
+    DataProcessor.applyVelocity(config, result)
+    for (const frame of result) {
+      expect(frame[0].blurRank).toBe(0)
+      expect(frame[1].blurRank).toBe(1)
+      expect(frame[2].blurRank).toBe(2)
+    }
+  })
+
+  it('1-rank swap: 对称守恒 A.blur + B.blur ≡ 1', () => {
+    const config = new Config({ topN: 5, swapDurationSec: 0.5, fps: 60 })
+    const N = 120
+    const result = buildSegment(0, 1, N, (i) => {
+      if (i === 0) {
+        return [['A', 0, 100], ['B', 1, 50]]
+      }
+      return [['B', 0, 100], ['A', 1, 50]]
+    })
+    DataProcessor.applyVelocity(config, result)
+    for (let t = 0; t < N; t++) {
+      const a = result[t].find(d => d.id === 'A')!.blurRank
+      const b = result[t].find(d => d.id === 'B')!.blurRank
+      expect(a + b).toBeCloseTo(1, 5)
+    }
+  })
+
+  it('1-rank swap: 在 swapDurationSec 内完成位移', () => {
+    const config = new Config({ topN: 5, swapDurationSec: 0.5, fps: 60 })
+    // 30 帧 = swapDurationSec at fps=60。velocity 模型 1-rank 位移恰好耗时 D。
+    const N = 120
+    const result = buildSegment(0, 1, N, (i) => {
+      if (i === 0) {
+        return [['A', 0, 100], ['B', 1, 50]]
+      }
+      return [['B', 0, 100], ['A', 1, 50]]
+    })
+    DataProcessor.applyVelocity(config, result)
+    // t=30 (=fps × D) 应接近完成；放宽到 t=45 给离散误差留余量。
+    expect(result[45].find(d => d.id === 'B')!.blurRank).toBeCloseTo(0, 2)
+    expect(result[45].find(d => d.id === 'A')!.blurRank).toBeCloseTo(1, 2)
+  })
+
+  it('1-rank swap: 单调向 target 前进（无超调）', () => {
+    const config = new Config({ topN: 5, swapDurationSec: 0.5, fps: 60 })
+    const N = 90
+    const result = buildSegment(0, 1, N, (i) => {
+      if (i === 0) {
+        return [['A', 0, 100], ['B', 1, 50]]
+      }
+      return [['B', 0, 100], ['A', 1, 50]]
+    })
+    DataProcessor.applyVelocity(config, result)
+    // B 从 1 单调下降到 0（不会先超过 0 再回弹）。
+    for (let t = 1; t < N; t++) {
+      const cur = result[t].find(d => d.id === 'B')!.blurRank
+      const prev = result[t - 1].find(d => d.id === 'B')!.blurRank
+      expect(cur).toBeLessThanOrEqual(prev + 1e-9)
+      expect(cur).toBeGreaterThanOrEqual(-1e-9)
+    }
+  })
+
+  it('velocity smooth: 帧间速度变化 ≤ maxAccel × dt（除 touchdown 吸附帧）', () => {
+    const config = new Config({ topN: 5, swapDurationSec: 0.5, fps: 60 })
+    const D = config.swapDurationSec
+    const fps = config.fps
+    const dt = 1 / fps
+    const maxAccel = 32 / (D * D)
+    const maxDv = maxAccel * dt
+    const N = 90
+    const result = buildSegment(0, 1, N, (i) => {
+      if (i === 0) {
+        return [['A', 0, 100], ['B', 1, 50]]
+      }
+      return [['B', 0, 100], ['A', 1, 50]]
+    })
+    DataProcessor.applyVelocity(config, result)
+    // 推导出帧间速度：v_t = (blurRank_t - blurRank_{t-1}) / dt。
+    // touchdown 吸附会产生一次性不连续（理论上界 ≈ √(2·a·maxVel·dt) ≈ 1.46 rank/s），可接受；
+    // 但应仅出现在 1-2 帧，主体过程严格平滑。
+    const blurs = result.map(f => f.find(d => d.id === 'B')!.blurRank)
+    let exceptions = 0
+    for (let t = 2; t < N; t++) {
+      const v1 = (blurs[t - 1] - blurs[t - 2]) / dt
+      const v2 = (blurs[t] - blurs[t - 1]) / dt
+      if (Math.abs(v2 - v1) > maxDv * 1.5 + 1e-6) {
+        exceptions++
+      }
+    }
+    expect(exceptions).toBeLessThanOrEqual(2)
+  })
+
+  it('multi-rank jump: B 从 rank=3 直接降到 rank=0，单调收敛', () => {
+    const config = new Config({ topN: 5, swapDurationSec: 0.5, fps: 60 })
+    const N = 5 * 60
+    const result = buildSegment(0, 1, N, (i) => {
+      if (i === 0) {
+        return [['A', 0, 100], ['C', 1, 80], ['D', 2, 60], ['B', 3, 40]]
+      }
+      return [['B', 0, 120], ['A', 1, 100], ['C', 2, 80], ['D', 3, 60]]
+    })
+    DataProcessor.applyVelocity(config, result)
+    expect(result[0].find(d => d.id === 'B')!.blurRank).toBe(3)
+    // 多 rank 跳跃理论时长 ≈ D + (Δ-1)/2 × D = 1.5D = 0.75s = 45 帧。给充足余量。
+    expect(result.at(-1)!.find(d => d.id === 'B')!.blurRank).toBeCloseTo(0, 5)
+    // B 全程单调下降。
+    const blursB = result.map(f => f.find(d => d.id === 'B')!.blurRank)
+    for (let t = 1; t < N; t++) {
+      expect(blursB[t]).toBeLessThanOrEqual(blursB[t - 1] + 1e-9)
+    }
+  })
+
+  it('multi-rank jump: 速度受三角峰值 √(2·a·N/2) 限制，不会无限加速', () => {
+    // 新模型无 maxVel cap；峰值由 brakingVel 决定 = √(2·a·d_remaining)，
+    // 最大可能峰值 = √(a·N) (在 d=N/2 处达到)。
+    const config = new Config({ topN: 5, swapDurationSec: 0.5, fps: 60 })
+    const D = config.swapDurationSec
+    const fps = config.fps
+    const dt = 1 / fps
+    const maxAccel = 32 / (D * D)
+    const nRank = 3
+    const triangularPeak = Math.sqrt(maxAccel * nRank) // 3-rank 跳跃理论峰值
+    const N = 5 * 60
+    const result = buildSegment(0, 1, N, (i) => {
+      if (i === 0) {
+        return [['A', 0, 100], ['C', 1, 80], ['D', 2, 60], ['B', 3, 40]]
+      }
+      return [['B', 0, 120], ['A', 1, 100], ['C', 2, 80], ['D', 3, 60]]
+    })
+    DataProcessor.applyVelocity(config, result)
+    const blursB = result.map(f => f.find(d => d.id === 'B')!.blurRank)
+    for (let t = 1; t < N; t++) {
+      const v = Math.abs(blursB[t] - blursB[t - 1]) / dt
+      // 允许 minVel 兜底和数值误差稍微宽松。
+      expect(v).toBeLessThanOrEqual(triangularPeak * 1.05 + 1e-6)
+    }
+  })
+
+  it('value reversal: target 反转 → 速度平滑反向，最终收敛到新 target', () => {
+    const config = new Config({ topN: 5, swapDurationSec: 0.5, fps: 60 })
+    const D = config.swapDurationSec
+    const fps = config.fps
+    const dt = 1 / fps
+    const maxAccel = 32 / (D * D)
+    const maxDv = maxAccel * dt
+    const N = 120
+    const result: RankedData[][] = []
+    for (let i = 0; i < N; i++) {
+      if (i === 0) {
+        result.push([makeRanked('A', 0, { value: 100 }), makeRanked('B', 1, { value: 50 })])
+      }
+      else if (i < 15) {
+        result.push([makeRanked('B', 0, { value: 100 }), makeRanked('A', 1, { value: 50 })])
+      }
+      else {
+        result.push([makeRanked('A', 0, { value: 100 }), makeRanked('B', 1, { value: 50 })])
+      }
+    }
+    DataProcessor.applyVelocity(config, result)
+    // 最终回到原 rank。
+    expect(result.at(-1)!.find(d => d.id === 'A')!.blurRank).toBeCloseTo(0, 2)
+    expect(result.at(-1)!.find(d => d.id === 'B')!.blurRank).toBeCloseTo(1, 2)
+    // 主体平滑；target 反转 2 次 + touchdown 共最多 ~4 帧例外。
+    const blursA = result.map(f => f.find(d => d.id === 'A')!.blurRank)
+    let exceptions = 0
+    for (let t = 2; t < N; t++) {
+      const v1 = (blursA[t - 1] - blursA[t - 2]) / dt
+      const v2 = (blursA[t] - blursA[t - 1]) / dt
+      if (Math.abs(v2 - v1) > maxDv * 1.5 + 1e-6) {
+        exceptions++
+      }
+    }
+    expect(exceptions).toBeLessThanOrEqual(4)
+  })
+
+  it('blurRank 全程不越界 [0, N-1]', () => {
+    const config = new Config({ topN: 5, swapDurationSec: 0.5, fps: 60 })
+    const N = 6 * 60
+    const result = buildSegment(0, 1, N, (i) => {
+      if (i === 0) {
+        return [['A', 0, 100], ['B', 1, 80], ['C', 2, 60], ['D', 3, 40], ['E', 4, 20]]
+      }
+      return [['E', 0, 200], ['D', 1, 180], ['C', 2, 160], ['B', 3, 140], ['A', 4, 120]]
+    })
+    DataProcessor.applyVelocity(config, result)
+    for (const frame of result) {
+      for (const d of frame) {
+        expect(d.blurRank).toBeGreaterThanOrEqual(-1e-9)
+        expect(d.blurRank).toBeLessThanOrEqual(frame.length - 1 + 1e-9)
+      }
+    }
+    const last = result.at(-1)!
+    expect(last.find(d => d.id === 'E')!.blurRank).toBeCloseTo(0, 5)
+    expect(last.find(d => d.id === 'D')!.blurRank).toBeCloseTo(1, 5)
+    expect(last.find(d => d.id === 'C')!.blurRank).toBeCloseTo(2, 5)
+    expect(last.find(d => d.id === 'B')!.blurRank).toBeCloseTo(3, 5)
+    expect(last.find(d => d.id === 'A')!.blurRank).toBeCloseTo(4, 5)
+  })
+
+  it('N > topN: topN 外 bar 升入 topN（rank unclamped, target 全局 unique）', () => {
+    const config = new Config({ topN: 3, swapDurationSec: 0.5, fps: 60 })
+    const N = 5 * 60
+    const result = buildSegment(0, 1, N, (i) => {
+      if (i === 0) {
+        return [['a', 0, 50], ['b', 1, 40], ['c', 2, 30], ['d', 3, 20], ['e', 4, 10]]
+      }
+      return [['e', 0, 100], ['a', 1, 50], ['b', 2, 40], ['c', 3, 30], ['d', 4, 20]]
+    })
+    DataProcessor.applyVelocity(config, result)
+    const last = result.at(-1)!
+    expect(last.find(d => d.id === 'e')!.blurRank).toBeCloseTo(0, 5)
+    expect(last.find(d => d.id === 'a')!.blurRank).toBeCloseTo(1, 5)
+    expect(last.find(d => d.id === 'b')!.blurRank).toBeCloseTo(2, 5)
+    expect(last.find(d => d.id === 'c')!.blurRank).toBeCloseTo(3, 5)
+    expect(last.find(d => d.id === 'd')!.blurRank).toBeCloseTo(4, 5)
+    for (const frame of result) {
+      for (const d of frame) {
+        expect(d.blurRank).toBeGreaterThanOrEqual(-1e-9)
+        expect(d.blurRank).toBeLessThanOrEqual(frame.length - 1 + 1e-9)
+      }
+    }
+  })
+
+  it('3-bar reshuffle: 中间 bar 不会停滞重叠', () => {
+    // A=0,B=1,C=2 → C=0,B=1,A=2。B 的 target 不变（rank=1）但视觉上是「让位」过程。
+    // velocity 模型：B 的 target 始终为 1，速度为 0，blurRank 一直 = 1，独立于 A/C 交换。
+    const config = new Config({ topN: 5, swapDurationSec: 0.5, fps: 60 })
+    const N = 5 * 60
+    const result = buildSegment(0, 1, N, (i) => {
+      if (i === 0) {
+        return [['A', 0, 100], ['B', 1, 80], ['C', 2, 60]]
+      }
+      return [['C', 0, 120], ['B', 1, 100], ['A', 2, 80]]
+    })
+    DataProcessor.applyVelocity(config, result)
+    // B 全程 ≈ 1（target 不变）。
+    for (const frame of result) {
+      const b = frame.find(d => d.id === 'B')!.blurRank
+      expect(b).toBeCloseTo(1, 5)
+    }
+    // A、C 收敛到目标。
+    const last = result.at(-1)!
+    expect(last.find(d => d.id === 'C')!.blurRank).toBeCloseTo(0, 5)
+    expect(last.find(d => d.id === 'A')!.blurRank).toBeCloseTo(2, 5)
+  })
+})
+
+describe('dataprocessor.swapalgorithm.dispatch', () => {
+  it('default config.swapAlgorithm is "velocity"', () => {
+    expect(new Config().swapAlgorithm).toBe('velocity')
+  })
+
+  it('addTailingFrames dispatches to velocity and writes blurRank', () => {
+    const config = new Config({ topN: 2, swapDurationSec: 0.5, fps: 60 })
+    const makeOne = (id: string, rank: number, value: number): RankedData => ({
+      id,
+      label: id,
+      value,
+      step: 0,
+      alpha: 1,
+      raw: { id },
+      up: false,
+      rank,
+      blurRank: 0,
+    })
+    const result: RankedData[][] = [[makeOne('A', 0, 100), makeOne('B', 1, 80)]]
+    addTailingFrames(config, result)
+    expect(result.length).toBeGreaterThan(1) // 尾帧已补齐
+    for (const frame of result) {
+      for (const d of frame) {
+        expect(typeof d.blurRank).toBe('number')
+      }
+    }
+    expect(result[0].find(d => d.id === 'A')!.blurRank).toBe(0)
+    expect(result[0].find(d => d.id === 'B')!.blurRank).toBe(1)
   })
 })
 

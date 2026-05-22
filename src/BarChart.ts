@@ -9,7 +9,7 @@ import { getExtraValueLabelFontSize, getValueLabelFontSize } from './utils/label
 import { getValueScale } from './utils/scale'
 import { measureTextWidth } from './utils/textMetrics'
 
-const LAYER_SETTLE_EPSILON = 0.01
+const Z_ORDER_HYSTERESIS = 1
 const TITLE_FONT_SIZE = 36
 const TITLE_PADDING = 24
 
@@ -37,7 +37,7 @@ export class BarChart extends Container {
   frameValueScales: ScaleLinear<number, number>[]
   frameIdSets: InternSet<string>[]
   frameMaxSteps: Array<number | undefined>
-  barLayerDirection: Map<string, 'up' | 'down'>
+  barZOrder: string[]
   constructor(data: RankedData[][], config: Config) {
     super()
     this.config = config
@@ -47,7 +47,6 @@ export class BarChart extends Container {
     const frameValueScales: ScaleLinear<number, number>[] = []
     const frameIdSets: InternSet<string>[] = []
     const frameMaxSteps: Array<number | undefined> = []
-    const barLayerDirection = new Map<string, 'up' | 'down'>()
     const idList = [...new InternSet(data.flat().map(d => d.id))]
     const idImageMap = new Map(new InternSet(data.flat().map((d) => {
       return [d.id, textureMap.get(d.raw[config.imageField])]
@@ -73,26 +72,29 @@ export class BarChart extends Container {
     const xAxisLabelHeight = hasXAxisLabel ? this.xAxisLabel.height : 0
 
     for (const [i, d] of data.entries()) {
-      const [min, max] = extent(d, config.getValue)
+      // valueScale 以「正在显示中的 bar」的展示值为准：
+      // alpha==1 的段内 bar 才用来定 min/max；入场/出场过渡期的 bar 数值正在向 baseline 趋近，
+      // 让它们参与会把值域往下拉甚至带到负区间，导致正常 bar 宽度被压扁。
+      // 直接读 item.value（展示值），不走 config.getValue —— getValue 默认取 raw[valueField]，
+      // 而新 DataProcessor 不再把 raw 字段铺到 Data 上。
+      const visible = d.filter(item => item.alpha >= 1)
+      const [min, max] = extent(visible, item => item.value)
       const safeMin = Number.isFinite(min) ? Number(min) : 0
       const safeMax = Number.isFinite(max) ? Number(max) : 0
       frameMinValues[i] = safeMin
       frameMaxValues[i] = safeMax
       frameValueScales[i] = getValueScale(config.valueScaleType, safeMin, safeMax, config.valueScaleDelta)
       frameIdSets[i] = new InternSet(d.map(item => item.id))
-      if (d.length > 0) {
-        let maxStep = d[0].step
-        for (let idx = 1; idx < d.length; idx += 1) {
-          const step = d[idx].step
-          if (step > maxStep) {
-            maxStep = step
-          }
+      let maxStep: number | undefined
+      for (const item of d) {
+        if (item.alpha <= 0) {
+          continue
         }
-        frameMaxSteps[i] = maxStep
+        if (maxStep === undefined || item.step > maxStep) {
+          maxStep = item.step
+        }
       }
-      else {
-        frameMaxSteps[i] = undefined
-      }
+      frameMaxSteps[i] = maxStep
     }
 
     const smoothingRadius = Math.max(0, Math.floor(config.valueScaleSmoothing))
@@ -298,7 +300,7 @@ export class BarChart extends Container {
     this.frameValueScales = frameValueScales
     this.frameIdSets = frameIdSets
     this.frameMaxSteps = frameMaxSteps
-    this.barLayerDirection = barLayerDirection
+    this.barZOrder = []
     if (config.showStepLabel) {
       stepLabel.anchor.set(1, 1)
       stepLabel.position.set(config.width, config.height)
@@ -326,6 +328,11 @@ export class BarChart extends Container {
   }
 
   private getValueLabelInfo(item: RankedData, config: Config) {
+    // 入场/出场期间 value=0 时 width=0 自然不可见，valueLabel 也不显示。
+    // value 一旦 >0 就跟着显示数字 —— 数值动画的核心视觉。
+    if (item.alpha <= 0 || item.value <= 0) {
+      return { valueText: '', extraText: '', totalWidth: 0 }
+    }
     const valueLabel = config.getValueLabel(item)
     const extraLabel = config.getValueExtra(item)
     const valueText = valueLabel === undefined || valueLabel === null ? '' : String(valueLabel)
@@ -356,6 +363,9 @@ export class BarChart extends Container {
         continue
       }
       for (const item of frame) {
+        if (item.alpha <= 0) {
+          continue
+        }
         const { totalWidth } = this.getValueLabelInfo(item, config)
         if (totalWidth <= 0) {
           continue
@@ -387,7 +397,8 @@ export class BarChart extends Container {
     const data = this.data[idx]
     let valueScale = this.frameValueScales[idx]
     if (!valueScale) {
-      const [min, max] = extent(data, d => d.value)
+      const visible = data.filter(item => item.alpha >= 1)
+      const [min, max] = extent(visible, d => d.value)
       valueScale = getValueScale(config.valueScaleType, min, max, config.valueScaleDelta)
       this.frameValueScales[idx] = valueScale
     }
@@ -405,26 +416,66 @@ export class BarChart extends Container {
       barIdSet = new InternSet(data.map(d => d.id))
       this.frameIdSets[idx] = barIdSet
     }
-    for (const [i, d] of data.entries()) {
-      const bar = this.barComponentMap.get(d.id)!
-      const previousDirection = this.barLayerDirection.get(d.id)
-      const isSettled = Math.abs(d.blurRank - d.rank) < LAYER_SETTLE_EPSILON
-      let effectiveDirection = previousDirection ?? (d.up ? 'up' : 'down')
-      if (d.up) {
-        effectiveDirection = 'up'
+    // 维护全局 z-order：按 blurRank 升序排列；越靠后 zIndex 越高 → 原本位置越下方的 bar 渲染越上层，
+    // 等价于"上升者覆盖下降者"。bubble sort 带 hysteresis，仅当相邻 bar 已错开 > HYS 时才允许交换，
+    // 重叠中（即使方向反转）层叠顺序保持稳定。
+    const blurRankMap = new Map<string, number>()
+    for (const d of data) {
+      blurRankMap.set(d.id, d.blurRank)
+    }
+    const knownInOrder = new Set(this.barZOrder)
+    for (const d of data) {
+      if (knownInOrder.has(d.id)) {
+        continue
       }
-      else if (effectiveDirection === 'up') {
-        if (isSettled) {
-          effectiveDirection = 'down'
+      let insertIdx = this.barZOrder.length
+      for (let k = 0; k < this.barZOrder.length; k += 1) {
+        const otherBlur = blurRankMap.get(this.barZOrder[k])
+        if (otherBlur === undefined) {
+          continue
+        }
+        if (d.blurRank < otherBlur) {
+          insertIdx = k
+          break
         }
       }
-      else {
-        effectiveDirection = 'down'
+      this.barZOrder.splice(insertIdx, 0, d.id)
+      knownInOrder.add(d.id)
+    }
+    let swapped = true
+    while (swapped) {
+      swapped = false
+      for (let i = 0; i < this.barZOrder.length - 1; i += 1) {
+        const ba = blurRankMap.get(this.barZOrder[i])
+        const bb = blurRankMap.get(this.barZOrder[i + 1])
+        if (ba === undefined || bb === undefined) {
+          continue
+        }
+        if (ba > bb + Z_ORDER_HYSTERESIS) {
+          const tmp = this.barZOrder[i]
+          this.barZOrder[i] = this.barZOrder[i + 1]
+          this.barZOrder[i + 1] = tmp
+          swapped = true
+        }
       }
-      this.barLayerDirection.set(d.id, effectiveDirection)
-      bar.zIndex = effectiveDirection === 'up' ? 2 : 1
-      const valueRatio = Math.max(0, Math.min(valueScale(d.value), 1))
-      const barWidth = this.maxBarWidth * valueRatio
+    }
+    for (let i = 0; i < this.barZOrder.length; i += 1) {
+      const bar = this.barComponentMap.get(this.barZOrder[i])
+      if (bar) {
+        bar.zIndex = i
+      }
+    }
+    // 宽度直接由 bar 自己的 value 通过 valueScale 算出 —— width 跟 value 严格绑定（横向），
+    // y 跟 blurRank 严格绑定（纵向）。两者解耦，避免新模型下 visualOrder lag 导致的"宽度跟数值脱节"。
+    // 入场/出场期间 value=0 时 width=0 自然不可见。
+    const maxBarWidth = this.maxBarWidth
+    const widthForValue = (v: number): number => {
+      const ratio = Math.max(0, Math.min(valueScale(v), 1))
+      return maxBarWidth * ratio
+    }
+    for (const [i, d] of data.entries()) {
+      const bar = this.barComponentMap.get(d.id)!
+      const barWidth = widthForValue(d.value)
       const { valueText, extraText, totalWidth } = this.getValueLabelInfo(d, config)
       const canShowValue = totalWidth <= (this.totalAvailableWidth - barWidth)
       bar.update({

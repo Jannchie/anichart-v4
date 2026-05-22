@@ -4,6 +4,9 @@ import { colorMap, colors } from './resources'
 
 export type ValueScaleType = 'from-zero' | 'from-min' | 'from-delta'
 
+// 当前只有 velocity；未来扩展时往 union 加成员，并在 DataProcessor 的 SWAP_ALGORITHMS 注册表里注册实现。
+export type SwapAlgorithmName = 'velocity'
+
 interface IConfig {
   canvasWidth: number
   canvasHeight: number
@@ -23,11 +26,12 @@ interface IConfig {
   getValueLabel: (d: any, i: number) => any
   getBarInfo: (d: any, i: number, step: number) => any
   maxRetentionTimeSec: number // 最大暂留时间
-  decayRate: number
+  baselineOffset: number
   transitionDurationSec: number
   totalDurationSec: number
   fps: number
   topN: number
+  swapAlgorithm: SwapAlgorithmName
   swapDurationSec: number
   barGap: number
   barInfoPadding: number
@@ -74,11 +78,12 @@ export class Config {
   getValueLabel: (d: any, i?: number) => any
   getBarInfo: (d: any, i?: number, step?: number) => any
   maxRetentionTimeSec: number
-  decayRate: number
+  baselineOffset: number
   transitionDurationSec: number
   totalDurationSec: number
   fps: number
   topN: number
+  swapAlgorithm: SwapAlgorithmName
   swapDurationSec: number
   barGap: number
   barHeight: number
@@ -132,12 +137,17 @@ export class Config {
     this.getValueExtra = (_: Data) => ''
     this.getBarInfo = (d: any) => d.id
     this.maxRetentionTimeSec = 5
-    this.decayRate = 1
-    this.transitionDurationSec = 0.5
+    // 入场起点 / 出场终点取「真实数据排名第 topN + baselineOffset 位」的值。
+    // 默认外推 2 位，让新进/离场 bar 不只是擦着末位，而是从更明确的「视线外」滑入/滑出。
+    this.baselineOffset = 2
+    this.transitionDurationSec = 1
     this.totalDurationSec = 10
     this.barInfoPadding = 10
     this.fps = 60
     this.topN = 20
+    this.swapAlgorithm = 'velocity'
+    // velocity 算法语义：1-rank 位移大致耗时 swapDurationSec（梯形速度曲线 maxVel=2/D, maxAccel=4/D²）。
+    // 多 rank 跳跃自然按 maxVel 巡航，时长 = D + (Δrank-1)/2 × D。
     this.swapDurationSec = 0.5
     this.barGap = 4
     this.barHeight = 24

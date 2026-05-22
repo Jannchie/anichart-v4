@@ -1,8 +1,35 @@
 /* eslint-disable no-console */
-import type { DSVRowArray, InternMap, ScaleLinear } from 'd3'
-import type { Config } from './Config'
+import type { DSVRowArray } from 'd3'
+import type { Config, SwapAlgorithmName } from './Config'
 import type { Data, RankedData } from './Data'
-import { blur, csv, extent, group, InternSet, interpolate, range, scaleLinear } from 'd3'
+import { csv, extent, group, InternSet, range, scaleLinear } from 'd3'
+
+type SwapAlgorithm = (config: Config, result: RankedData[][]) => void
+
+interface Segment {
+  firstStep: number
+  lastStep: number
+  points: Data[]
+}
+
+interface Sampler {
+  id: string
+  label: string
+  segments: Segment[]
+}
+
+interface SampleResult {
+  value: number
+  alpha: number
+  raw: any
+}
+
+type BaselineFn = (step: number) => number
+
+const easeInOutCubic = (x: number): number =>
+  x < 0.5 ? 4 * x * x * x : 1 - ((-2 * x + 2) ** 3) / 2
+
+const lerp = (a: number, b: number, t: number): number => a + (b - a) * t
 
 export class DataProcessor {
   static async processCSV(path: string, config: Config): Promise<RankedData[][]> {
@@ -14,9 +41,7 @@ export class DataProcessor {
     console.time('process')
     const data = DataProcessor.preprocess(rawData, config)
     console.timeEnd('process')
-    // group by time
     const rawStepList = [...new InternSet(data.map(d => d.step))]
-    const idGroups = group(data, d => d.id)
     const [startStep, endStep] = extent(rawStepList)
     if (typeof startStep !== 'number' || typeof endStep !== 'number') {
       throw new TypeError('startStep and endStep must be number')
@@ -30,11 +55,15 @@ export class DataProcessor {
     if (transitionDurationSec !== config.transitionDurationSec) {
       console.warn('transitionDurationSec * 2 > maxRetentionTimeSec, using maxRetentionTimeSec / 2 instead')
     }
+    const transitionSteps = stepSec > 0 ? transitionDurationSec / stepSec : 0
 
-    console.time('scaleMap')
-    const scaleMap = DataProcessor.getScaleMap(idGroups, endStep, stepSec, config, startStep, transitionDurationSec)
-    console.timeEnd('scaleMap')
-    // start step end step, fps, stepSec,
+    console.time('samplers')
+    const samplers = DataProcessor.buildSamplers(data, config, stepSec)
+    console.timeEnd('samplers')
+    console.time('baseline')
+    const baselineScale = DataProcessor.buildBaselineScale(data, config)
+    console.timeEnd('baseline')
+
     const stepInterval = totalStep > 0 ? (endStep - startStep) / totalFrame : 0
     let stepList: number[]
     if (stepInterval > 0 && Number.isFinite(stepInterval)) {
@@ -50,108 +79,400 @@ export class DataProcessor {
       stepList = Array.from({ length: totalFrame }, () => startStep)
     }
     console.time('fillRank')
-    const result = DataProcessor.fillRank(stepList, scaleMap, config)
+    const result = DataProcessor.fillRank(stepList, samplers, baselineScale, transitionSteps, config)
     console.timeEnd('fillRank')
     DataProcessor.addTailingFrames(config, result)
     return result
   }
 
-  private static fillRank(stepList: number[], scaleMap: Map<string, ScaleLinear<Data, Data>>, config: Config) {
+  private static fillRank(
+    stepList: number[],
+    samplers: Sampler[],
+    baselineScale: BaselineFn,
+    transitionSteps: number,
+    config: Config,
+  ): RankedData[][] {
     return stepList.map((step) => {
+      const baseline = baselineScale(step)
       const list: RankedData[] = []
-      for (const scale of scaleMap.values()) {
-        const scaledData = scale(step)
-        if (scaledData) {
-          const cloned: RankedData = {
-            ...scaledData,
-            rank: 0,
-            blurRank: 0,
-          }
-          list.push(cloned)
-        }
+      for (const sampler of samplers) {
+        const sampled = DataProcessor.sampleAtStep(sampler, step, baseline, transitionSteps)
+        list.push({
+          id: sampler.id,
+          label: sampler.label,
+          value: sampled.value,
+          step,
+          alpha: sampled.alpha,
+          raw: sampled.raw,
+          up: false,
+          rank: 0,
+          blurRank: 0,
+        })
       }
-      // 根据 value 排序
+      // 按 value desc 排序：value=baseline 的 bar 自然落到尾部。NaN 兜底 → -Infinity。
       list.sort((a, b) => {
-        const aValue = a.alpha <= 0 ? Number.NaN : a.value
-        const bValue = b.alpha <= 0 ? Number.NaN : b.value
-        // 如果是 NaN 则排在最后
-        if (Number.isNaN(aValue)) {
-          return 1
-        }
-        if (Number.isNaN(bValue)) {
-          return -1
-        }
-        return bValue - aValue
+        const av = Number.isFinite(a.value) ? a.value : Number.NEGATIVE_INFINITY
+        const bv = Number.isFinite(b.value) ? b.value : Number.NEGATIVE_INFINITY
+        return bv - av
       })
-      // 多留一位
-      return list.slice(0, config.topN + 1).map((d, i) => {
-        d.rank = i // 填上排名
-        if (d.blurRank === 0) {
-          d.blurRank = i
-        }
+      // rank: 在 topN 内严格按 value-sort（0..topN-1, unique）；超出 topN 的 bar 统一停在 rank=topN
+      // （画面外一格的停车位）。alpha 由 applyVelocity 按 in-topN 状态推导。
+      return list.map((d, i) => {
+        d.rank = i < config.topN ? i : config.topN
+        d.blurRank = d.rank
         return d
       })
     })
   }
 
+  // 按 maxRetentionTimeSec 将每个 id 的真实数据点（已剔除 NaN）切成 segments。
+  // 同段内 gap 在 sample 时用 easeInOutCubic 桥接；段间视为「先消失再出现」。
+  private static buildSamplers(data: Data[], config: Config, stepSec: number): Sampler[] {
+    const maxGapSteps = stepSec > 0 ? config.maxRetentionTimeSec / stepSec : Number.POSITIVE_INFINITY
+    const idGroups = group(data, d => d.id)
+    const samplers: Sampler[] = []
+    for (const [id, groupData] of idGroups.entries()) {
+      const real = groupData
+        .filter(d => d.alpha > 0 && Number.isFinite(d.value))
+        .toSorted((a, b) => a.step - b.step)
+      if (real.length === 0) {
+        continue
+      }
+      const label = real[0].label
+      const segments: Segment[] = []
+      let cur: Data[] = [real[0]]
+      for (let i = 1; i < real.length; i++) {
+        const prev = cur.at(-1)!
+        const next = real[i]
+        if ((next.step - prev.step) > maxGapSteps) {
+          segments.push({
+            firstStep: cur[0].step,
+            lastStep: cur.at(-1)!.step,
+            points: cur,
+          })
+          cur = [next]
+        }
+        else {
+          cur.push(next)
+        }
+      }
+      segments.push({
+        firstStep: cur[0].step,
+        lastStep: cur.at(-1)!.step,
+        points: cur,
+      })
+      samplers.push({ id, label, segments })
+    }
+    return samplers
+  }
+
+  // 「末位以下」基线：每个真实 step 上取第 (topN + baselineOffset) 位的值；
+  // 条目不足时用末尾邻位平均差线性外推。然后用 d3 scaleLinear 在帧 step 上插值。
+  private static buildBaselineScale(data: Data[], config: Config): BaselineFn {
+    const real = data.filter(d => d.alpha > 0 && Number.isFinite(d.value))
+    if (real.length === 0) {
+      return () => 0
+    }
+    const stepGroups = group(real, d => d.step)
+    const offset = Math.max(1, Math.round(config.baselineOffset))
+    const targetIdx = config.topN + offset
+    const steps: number[] = []
+    const baselines: number[] = []
+    const sortedKeys = [...stepGroups.keys()].sort((a, b) => a - b)
+    for (const step of sortedKeys) {
+      const arr = [...stepGroups.get(step)!].sort((a, b) => b.value - a.value)
+      const n = arr.length
+      let bv: number
+      if (n >= targetIdx) {
+        bv = arr[targetIdx - 1].value
+      }
+      else if (n >= 2) {
+        const tail = arr[n - 1].value
+        const span = arr[0].value - tail
+        const diff = span > 0 ? span / (n - 1) : Math.max(Math.abs(tail) * 0.05, 1)
+        bv = tail - diff * (targetIdx - n)
+      }
+      else {
+        const v = arr[0].value
+        const diff = Math.max(Math.abs(v) * 0.05, 1)
+        bv = v - diff * (targetIdx - 1)
+      }
+      steps.push(step)
+      baselines.push(bv)
+    }
+    if (steps.length === 1) {
+      const v = baselines[0]
+      return () => v
+    }
+    const scale = scaleLinear<number>().domain(steps).range(baselines).clamp(true)
+    return (step: number) => scale(step)
+  }
+
+  // 区间判定：
+  //   segment 内 → 段内 piecewise easing 插值，alpha=1
+  //   [first - trans, first) → enter：value 从 baseline 缓动到 first.value，alpha 0→1
+  //   (last, last + trans] → exit：value 从 last.value 缓动到 baseline，alpha 1→0
+  //   其他（段间长 gap、首段之前、末段之后） → value=baseline, alpha=0
+  // segment 划分保证：相邻段 transition 区间不重叠（gap > maxRet, trans ≤ maxRet/2）。
+  private static sampleAtStep(
+    sampler: Sampler,
+    step: number,
+    baseline: number,
+    transitionSteps: number,
+  ): SampleResult {
+    const segments = sampler.segments
+    for (const seg of segments) {
+      if (step >= seg.firstStep && step <= seg.lastStep) {
+        return {
+          value: DataProcessor.interpolateInSegment(seg, step),
+          alpha: 1,
+          raw: DataProcessor.rawNearStep(seg, step),
+        }
+      }
+    }
+    if (transitionSteps > 0) {
+      for (const seg of segments) {
+        if (step >= seg.firstStep - transitionSteps && step < seg.firstStep) {
+          const t = (step - (seg.firstStep - transitionSteps)) / transitionSteps
+          const eased = easeInOutCubic(t)
+          const target = seg.points[0]
+          return {
+            value: lerp(baseline, target.value, eased),
+            alpha: eased,
+            raw: { ...target.raw },
+          }
+        }
+      }
+      for (const seg of segments) {
+        if (step > seg.lastStep && step <= seg.lastStep + transitionSteps) {
+          const t = (step - seg.lastStep) / transitionSteps
+          const eased = easeInOutCubic(t)
+          const source = seg.points.at(-1)!
+          return {
+            value: lerp(source.value, baseline, eased),
+            alpha: 1 - eased,
+            raw: { ...source.raw },
+          }
+        }
+      }
+    }
+    return {
+      value: baseline,
+      alpha: 0,
+      raw: DataProcessor.nearestRaw(segments, step),
+    }
+  }
+
+  private static interpolateInSegment(seg: Segment, step: number): number {
+    const pts = seg.points
+    if (pts.length === 1) {
+      return pts[0].value
+    }
+    let lo = 0
+    let hi = pts.length - 1
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1
+      if (pts[mid].step <= step) {
+        lo = mid
+      }
+      else {
+        hi = mid
+      }
+    }
+    const a = pts[lo]
+    const b = pts[hi]
+    if (a.step === b.step) {
+      return a.value
+    }
+    const t = (step - a.step) / (b.step - a.step)
+    return lerp(a.value, b.value, easeInOutCubic(t))
+  }
+
+  private static rawNearStep(seg: Segment, step: number): any {
+    const pts = seg.points
+    if (pts.length === 1) {
+      return { ...pts[0].raw }
+    }
+    let lo = 0
+    let hi = pts.length - 1
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1
+      if (pts[mid].step <= step) {
+        lo = mid
+      }
+      else {
+        hi = mid
+      }
+    }
+    const a = pts[lo]
+    const b = pts[hi]
+    if (a.step === b.step) {
+      return { ...a.raw }
+    }
+    const t = (step - a.step) / (b.step - a.step)
+    return { ...(t > 0.5 ? b.raw : a.raw) }
+  }
+
+  private static nearestRaw(segments: Segment[], step: number): any {
+    if (segments.length === 0) {
+      return null
+    }
+    const first = segments[0]
+    if (step <= first.firstStep) {
+      return { ...first.points[0].raw }
+    }
+    const last = segments.at(-1)!
+    if (step >= last.lastStep) {
+      return { ...last.points.at(-1)!.raw }
+    }
+    for (let i = 1; i < segments.length; i++) {
+      const prev = segments[i - 1]
+      const next = segments[i]
+      if (step > prev.lastStep && step < next.firstStep) {
+        const mid = (prev.lastStep + next.firstStep) / 2
+        return { ...(step < mid ? prev.points.at(-1)!.raw : next.points[0].raw) }
+      }
+    }
+    return null
+  }
+
   private static addTailingFrames(config: Config, result: RankedData[][]) {
-    // swap 占用的帧数：
-    const swapFrames = config.swapDurationSec * config.fps
-    // 最后需要留出一次交换的时间，将最后一帧的数据复制 swapFrames 次
+    // 尾帧：保留足够多帧让最后一段 velocity-driven 位移收敛。多 rank 跳跃时间 ≈ swapDurationSec × Δrank/2，
+    // 取 max(2s, 4×swapDurationSec) 作为保守上界（一般 4 rank 内收敛足够）。
+    const tailSec = Math.max(2, config.swapDurationSec * 4)
+    const swapFrames = Math.max(1, Math.round(tailSec * config.fps))
     for (let i = 0; i < swapFrames; i++) {
-      // 为了避免引用问题，需要深拷贝
       const lastFrame = result.at(-1)
       if (!lastFrame) {
         break
       }
       result.push(lastFrame.map(d => ({ ...d })))
     }
-    const groupIDResult = group(result.flat(), d => d.id)
-    for (const records of groupIDResult.values()) {
+    const algo = SWAP_ALGORITHMS[config.swapAlgorithm]
+    algo(config, result)
+    DataProcessor.computeUpFlags(result)
+  }
+
+  // velocity-controlled rank trajectory + clamped target + boundary-driven alpha：
+  //   target = d.rank（来自 fillRank，clamped 到 topN：内部 unique 0..topN-1，外部统一 topN 停车位）
+  //   desired = sign(dist) × max(minVel, √(2·maxAccel·|dist|))（三角速度曲线，无 maxVel cap）
+  //   velocity 以 maxAccel·dt 上限平滑变化；displacement = velocity × dt
+  //   alpha = clamp(topN - blurRank, 0, 1)
+  //     blurRank ≤ topN-1（in-topN）→ alpha=1
+  //     blurRank = topN（parking）→ alpha=0
+  //     boundary 过渡 blurRank ∈ (topN-1, topN) → alpha 跟随线性插值，与位置 ease 同步
+  // 通过 SWAP_ALGORITHMS 派发，不要直接调用。
+  static applyVelocity(config: Config, result: RankedData[][]) {
+    const T = result.length
+    if (T === 0) {
+      return
+    }
+    if (result[0].length === 0) {
+      return
+    }
+
+    const fps = config.fps
+    const dt = 1 / fps
+    const D = Math.max(1e-6, config.swapDurationSec)
+    const maxAccel = 32 / (D * D)
+    const minVel = 2 / D
+    const maxDv = maxAccel * dt
+    const topN = config.topN
+
+    const visualRank = new Map<string, number>()
+    const velocity = new Map<string, number>()
+
+    const writeAlpha = (d: RankedData) => {
+      d.alpha = Math.max(0, Math.min(1, topN - d.blurRank))
+    }
+
+    // 第 0 帧：snap 到 clamped rank（外部直接坐落在 parking）。
+    for (const d of result[0]) {
+      visualRank.set(d.id, d.rank)
+      velocity.set(d.id, 0)
+      d.blurRank = d.rank
+      writeAlpha(d)
+    }
+
+    for (let t = 1; t < T; t++) {
+      const frame = result[t]
+      for (const d of frame) {
+        // 中途出现的新 id：直接落在 target，速度 0。
+        if (!visualRank.has(d.id)) {
+          visualRank.set(d.id, d.rank)
+          velocity.set(d.id, 0)
+          d.blurRank = d.rank
+          writeAlpha(d)
+          continue
+        }
+
+        const vrPrev = visualRank.get(d.id)!
+        let v = velocity.get(d.id)!
+        const target = d.rank
+        const distance = target - vrPrev
+        const absDist = Math.abs(distance)
+
+        // 三角速度曲线 + minVel 兜底。
+        let desired: number
+        if (absDist < 1e-9) {
+          desired = 0
+        }
+        else {
+          const brakingVel = Math.sqrt(2 * maxAccel * absDist)
+          const sign = distance >= 0 ? 1 : -1
+          desired = sign * Math.max(minVel, brakingVel)
+        }
+
+        const dv = desired - v
+        v += dv >= 0 ? Math.min(dv, maxDv) : Math.max(dv, -maxDv)
+
+        let vr = vrPrev + v * dt
+        if ((distance > 0 && vr > target) || (distance < 0 && vr < target)) {
+          vr = target
+          v = 0
+        }
+        if (Math.abs(target - vr) < 1e-4 && Math.abs(v) < minVel) {
+          vr = target
+          v = 0
+        }
+
+        visualRank.set(d.id, vr)
+        velocity.set(d.id, v)
+        d.blurRank = vr
+        writeAlpha(d)
+      }
+    }
+  }
+
+  // up 状态用 blurRank 帧间变化判定。仅在接近整数 rank 时更新，避免过渡中翻转。
+  private static computeUpFlags(result: RankedData[][]) {
+    const byID = group(result.flat(), d => d.id)
+    for (const records of byID.values()) {
       records.sort((a, b) => a.step - b.step)
-      const ranks = records.map(d => d.rank)
-      const swapFrames = config.swapDurationSec * config.fps
-      const blurRanks = blur(ranks, swapFrames / 6)
-
-      for (const [i, d] of records.entries()) {
-        d.blurRank = blurRanks[i]
-        // 如果 blur rank 在 TopN - 1 ~ TopN 之间，则需要调整 alpha
-        // 如果 TopN 是 20，那么 blurRank 在 19 ~ 20 之间的 alpha 为 1 ~ 0，越靠近 20，alpha 越小
-        if (d.blurRank >= config.topN - 1) {
-          const alpha = 1 - (d.blurRank - config.topN + 1)
-          d.alpha = Math.max(0, Math.min(1, alpha))
-        }
-        // 还需要检查是否是上升还是下降。
-        // 只有当当前blurRank接近整数时才更新up状态，避免移动过程中的层叠跳跃
-        if (i > 0) {
-          const currentRank = blurRanks[i]
-          const prevRank = blurRanks[i - 1]
-
-          // 检查当前rank是否接近整数（允许小范围误差）
-          const isNearInteger = Math.abs(currentRank - Math.round(currentRank)) < 0.001
-
-          d.up = isNearInteger
-            ? currentRank < prevRank // 只在接近整数位置时更新up状态
-            : records[i - 1]?.up ?? false // 移动过程中保持前一帧的up状态
-        }
+      for (let i = 1; i < records.length; i++) {
+        const cur = records[i].blurRank
+        const prev = records[i - 1].blurRank
+        const isNearInteger = Math.abs(cur - Math.round(cur)) < 0.05
+        records[i].up = isNearInteger ? cur < prev : (records[i - 1]?.up ?? false)
       }
     }
   }
 
   private static preprocess(rawData: DSVRowArray<string>, config: Config) {
     const temp = rawData.map<Data>((d, i) => {
+      const rawValue = config.getValue(d, i)
+      const isMissing = Number.isNaN(rawValue)
       const result: Data = {
         id: config.getID(d, i),
         label: config.getLabel(d, i),
-        value: config.getValue(d, i),
+        value: isMissing ? 0 : rawValue,
         step: config.getStep(d, i),
-        alpha: Number.isNaN(config.getValue(d)) ? 0 : 1,
+        alpha: isMissing ? 0 : 1,
         raw: d,
         up: false,
       }
       for (const key in d) {
         const rawValue = d[key]
-        // Preserve the original label field to avoid unwanted number coercion
         if (key === config.labelField) {
           result[key] = rawValue
           continue
@@ -169,164 +490,17 @@ export class DataProcessor {
     const topN = config.topN
     const stepGroup = group(temp, d => Math.floor(d.step))
     const idSet = new InternSet<string>()
-    // 获取进入了 TopN 的 id
     for (const group of stepGroup.values()) {
       group.sort((a, b) => b.value - a.value)
-      for (const d of group.slice(0, topN + 1)) idSet.add(d.id) // 多留一位
+      for (const d of group.slice(0, topN + 1)) idSet.add(d.id)
     }
     const idGroups = group(temp, d => d.id)
     const data = [...idGroups.values()].filter(group => idSet.has(group[0].id)).flat()
     return data
   }
+}
 
-  private static getScaleMap(
-    idGroups: InternMap<string, Data[]>,
-    endStep: number,
-    stepSec: number,
-    config: Config,
-    startStep: number,
-    transitionDurationSec: number,
-  ) {
-    const scaleMap = new Map<string, ScaleLinear<Data, Data>>()
-    const transitionSteps = transitionDurationSec / stepSec
-    const retentionSteps = config.maxRetentionTimeSec / stepSec
-    const decayRate = config.decayRate
-    const decayValue = (value: number) => {
-      if (Number.isNaN(decayRate)) {
-        return Number.NaN
-      }
-      return value * decayRate
-    }
-    const createNode = (source: Data, overrides: Partial<Data>): Data => ({
-      id: source.id,
-      label: source.label,
-      value: overrides.value ?? source.value,
-      step: overrides.step ?? source.step,
-      raw: overrides.raw ?? source.raw,
-      alpha: overrides.alpha ?? source.alpha ?? 0,
-      up: overrides.up ?? source.up ?? false,
-      placeholder: overrides.placeholder ?? (source as any).placeholder ?? false,
-      skipNaNBridge: overrides.skipNaNBridge ?? (source as any).skipNaNBridge ?? false,
-    })
-
-    for (const [key, originalGroup] of idGroups.entries()) {
-      const sortedGroup = originalGroup.toSorted((a, b) => a.step - b.step)
-      const last = sortedGroup.at(-1)
-      if (!last) {
-        continue
-      }
-      const baseSequence: Data[] = [...sortedGroup]
-      const first = baseSequence[0]
-      if (first && first.step > startStep) {
-        baseSequence.unshift(createNode(first, {
-          value: Number.NaN,
-          step: startStep,
-          alpha: 0,
-          up: false,
-          placeholder: true,
-          skipNaNBridge: false,
-        }))
-      }
-      if ((endStep - last.step) * stepSec > config.maxRetentionTimeSec) {
-        baseSequence.push(
-          createNode(last, {
-            value: decayValue(last.value),
-            step: last.step + transitionSteps, // 退出动画的终点
-            alpha: 0,
-            up: false,
-            placeholder: true,
-            skipNaNBridge: true,
-          }),
-          createNode(last, {
-            value: Number.NaN,
-            step: endStep, // 最后一个时间戳
-            alpha: 0,
-            up: false,
-            placeholder: true,
-            skipNaNBridge: false,
-          }),
-        )
-      }
-      let prevStep = startStep
-      const expanded: Data[] = []
-      for (let i = 0; i < baseSequence.length; i++) {
-        const cur = baseSequence[i]
-        const curStep = cur.step
-        if ((curStep - prevStep) * stepSec > config.maxRetentionTimeSec) {
-          expanded.push(
-            createNode(cur, {
-              value: decayValue(cur.value),
-              step: prevStep + transitionSteps,
-              alpha: 0,
-              up: false,
-              placeholder: true,
-              skipNaNBridge: true,
-            }),
-            createNode(cur, {
-              value: decayValue(cur.value),
-              step: prevStep + retentionSteps,
-              alpha: 0,
-              up: false,
-              placeholder: true,
-              skipNaNBridge: true,
-            }),
-            createNode(cur, {
-              value: decayValue(cur.value),
-              step: curStep - transitionSteps,
-              alpha: 0,
-              up: true,
-              placeholder: true,
-              skipNaNBridge: true,
-            }),
-          )
-        }
-        // 如果 cur 的值是 NaN，则前后点需要加过渡元素
-        if (Number.isNaN(cur.value) && !(cur as any).skipNaNBridge) {
-          const prev = expanded.at(-1)
-          if (prev) {
-            expanded.push(createNode(prev, {
-              value: decayValue(prev.value),
-              step: prev.step + transitionSteps,
-              alpha: 0,
-              up: false,
-              placeholder: true,
-              skipNaNBridge: true,
-            }))
-          }
-        }
-        expanded.push(cur)
-        if (Number.isNaN(cur.value) && !(cur as any).skipNaNBridge) {
-          const next = baseSequence[i + 1]
-          if (next && !Number.isNaN(next.value)) {
-            expanded.push(createNode(next, {
-              value: decayValue(next.value),
-              step: next.step - transitionSteps,
-              alpha: 0,
-              up: true,
-              placeholder: true,
-              skipNaNBridge: true,
-            }))
-          }
-        }
-        prevStep = curStep
-      }
-      const scale = scaleLinear<Data>()
-        .domain(expanded.map(d => d.step))
-        .range(expanded)
-        .clamp(true)
-        .interpolate((a, b) => {
-          const inter = interpolate(a, b)
-          return (t) => {
-            const res = inter(t)
-            if (res) {
-            // 使用更接近目标点的 raw 数据
-              res.raw = t > 0.5 ? { ...b.raw } : { ...a.raw }
-            }
-            return res
-          }
-        })
-      scaleMap.set(key, scale)
-    }
-    return scaleMap
-  }
+// Strategy 注册表：新增算法只需 union 加 name + 这里注册即可。
+const SWAP_ALGORITHMS: Record<SwapAlgorithmName, SwapAlgorithm> = {
+  velocity: DataProcessor.applyVelocity,
 }
