@@ -12,12 +12,13 @@
     "typecheck": "turbo run typecheck",
     "docs:dev": "pnpm --filter docs dev",
     "playground:dev": "pnpm --filter playground dev",
+    "studio:dev": "pnpm --filter studio dev",
     "web:dev": "pnpm --filter web dev"
   },
   "devDependencies": {
-    "@jannchie/eslint-config": "^3.7.1",
-    "eslint": "^9.39.4",
-    "turbo": "^2.5.0",
-    "typescript": "^5.9.3"
+    "@jannchie/eslint-config": "^3.7.9",
+    "eslint": "^10.4.1",
+    "turbo": "^2.9.16",
+    "typescript": "^6.0.3"
   }
 }

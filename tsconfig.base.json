@@ -12,6 +12,9 @@
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "allowImportingTsExtensions": true,
+    // 让 @anichart/core 的类型也走 development 条件（→ packages/core/src），
+    // 与 dev 运行时一致，彻底摆脱"app 类型依赖 core dist/.d.ts"的脆弱链条。
+    "customConditions": ["development"],
     /* Linting */
     "strict": true,
     "noFallthroughCasesInSwitch": true,

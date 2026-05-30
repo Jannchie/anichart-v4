@@ -466,8 +466,8 @@ export class LineChart extends Container {
 
     // dynamic：每条序列记录它「首个 alpha>0（已绘制）步」；每帧左端取当前活跃序列里最早的那个。
     const firstDrawnStep = new Map<string, number>()
-    const rawMin: number[] = Array.from({ length: T }, () => gMin)
-    const rawMax: number[] = Array.from({ length: T }, () => gMin)
+    const rawMin: number[] = Array.from<number>({ length: T }).fill(gMin)
+    const rawMax: number[] = Array.from<number>({ length: T }).fill(gMin)
     for (let f = 0; f < T; f += 1) {
       const cur = stepAt(f)
       let lo = Number.POSITIVE_INFINITY
@@ -501,8 +501,8 @@ export class LineChart extends Container {
 
   private collectFrameStats() {
     const T = this.data.length
-    const frameMinValues: number[] = Array.from({ length: T }, () => 0)
-    const frameMaxValues: number[] = Array.from({ length: T }, () => 0)
+    const frameMinValues: number[] = Array.from<number>({ length: T }).fill(0)
+    const frameMaxValues: number[] = Array.from<number>({ length: T }).fill(0)
 
     // 动态纵轴：每帧的 domain 只汇总「当前活跃」(alpha>0) 序列「已绘制真实数据」的 min/max。
     //   - prefMin/prefMax：每条序列对其 alpha>=1 的真实点累计前缀极值（含入场以来的历史），

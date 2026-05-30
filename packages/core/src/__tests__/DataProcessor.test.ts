@@ -73,12 +73,13 @@ function createData(id: string, step: number, value: number, overrides: Partial<
   return Object.assign(base, overrides)
 }
 
-const easeInOutCubic = (x: number): number =>
-  x < 0.5 ? 4 * x * x * x : 1 - ((-2 * x + 2) ** 3) / 2
+function easeInOutCubic(x: number): number {
+  return x < 0.5 ? 4 * x * x * x : 1 - ((-2 * x + 2) ** 3) / 2
+}
 const lerp = (a: number, b: number, t: number): number => a + (b - a) * t
 
 describe('dataprocessor.buildsamplers', () => {
-  it('keeps consecutive points (gap ≤ maxRetentionTimeSec) in one segment', () => {
+  it('keeps consecutive points (gap ≤ maxretentiontimesec) in one segment', () => {
     const id = 'alpha'
     const data: Data[] = [
       createData(id, 0, 10),
@@ -94,7 +95,7 @@ describe('dataprocessor.buildsamplers', () => {
     expect(samplers[0].segments[0].points).toHaveLength(3)
   })
 
-  it('splits into multiple segments when gap exceeds maxRetentionTimeSec', () => {
+  it('splits into multiple segments when gap exceeds maxretentiontimesec', () => {
     const id = 'beta'
     const data: Data[] = [
       createData(id, 0, 10),
@@ -109,7 +110,7 @@ describe('dataprocessor.buildsamplers', () => {
     expect(samplers[0].segments[1].firstStep).toBe(20)
   })
 
-  it('drops NaN points (alpha=0 from preprocess) before segmenting', () => {
+  it('drops nan points (alpha=0 from preprocess) before segmenting', () => {
     const id = 'gamma'
     // 真实点：step=0, 6（短 gap 内）；中间 step=5 是 NaN，应被剔除。
     const data: Data[] = [
@@ -123,7 +124,7 @@ describe('dataprocessor.buildsamplers', () => {
     expect(samplers[0].segments[0].points.map(p => p.step)).toEqual([0, 6])
   })
 
-  it('skips ids whose every point is NaN', () => {
+  it('skips ids whose every point is nan', () => {
     const data: Data[] = [
       createData('x', 0, 0, { alpha: 0 }),
       createData('x', 1, 0, { alpha: 0 }),
@@ -135,7 +136,7 @@ describe('dataprocessor.buildsamplers', () => {
 })
 
 describe('dataprocessor.buildbaselinescale', () => {
-  it('from-delta: baseline = topN_max − valueScaleDelta', () => {
+  it('from-delta: baseline = topn_max − valuescaledelta', () => {
     const config = new Config({ topN: 2, valueScale: { type: 'from-delta', delta: 50 } })
     const data: Data[] = [
       createData('A', 0, 100),
@@ -159,7 +160,7 @@ describe('dataprocessor.buildbaselinescale', () => {
     expect(baseline(0)).toBe(0)
   })
 
-  it('from-min: baseline = 2·dataMin − dataMax within topN', () => {
+  it('from-min: baseline = 2·datamin − datamax within topn', () => {
     const config = new Config({ topN: 3, valueScale: { type: 'from-min' } })
     const data: Data[] = [
       createData('A', 0, 100),
@@ -224,7 +225,7 @@ describe('dataprocessor.sampleatstep', () => {
     expect(early.alpha).toBe(1)
   })
 
-  it('enter region: value ramps from baseline (axis min) to firstValue, alpha 0→1', () => {
+  it('enter region: value ramps from baseline (axis min) to firstvalue, alpha 0→1', () => {
     const sampler = makeSampler([[10, 100], [20, 200]])
     const transitionSteps = 4
     const baseline = 30 // 模拟当前帧 axis min
@@ -238,7 +239,7 @@ describe('dataprocessor.sampleatstep', () => {
     expect(start.alpha).toBeCloseTo(0, 5)
   })
 
-  it('exit region: value ramps from lastValue to baseline (axis min), alpha 1→0', () => {
+  it('exit region: value ramps from lastvalue to baseline (axis min), alpha 1→0', () => {
     const sampler = makeSampler([[0, 100], [10, 50]])
     const transitionSteps = 4
     const baseline = 5
@@ -252,7 +253,7 @@ describe('dataprocessor.sampleatstep', () => {
     expect(end.alpha).toBeCloseTo(0, 5)
   })
 
-  it('carry region: holds lastValue with alpha=1 until carrySteps elapses, then exits to baseline', () => {
+  it('carry region: holds lastvalue with alpha=1 until carrysteps elapses, then exits to baseline', () => {
     const sampler = makeSampler([[0, 100], [10, 50]])
     const transitionSteps = 4
     const carrySteps = 6
@@ -351,7 +352,7 @@ describe('dataprocessor.fillrank', () => {
     }],
   })
 
-  it('orders all bars by value desc and parks rank>=topN at config.topN', () => {
+  it('orders all bars by value desc and parks rank>=topn at config.topn', () => {
     const config = new Config({ topN: 2 })
     const samplers: Sampler[] = [
       constSampler('alpha', 12),
@@ -367,7 +368,7 @@ describe('dataprocessor.fillrank', () => {
     expect(frame[2].rank).toBe(config.topN)
   })
 
-  it('clamps rank beyond topN to topN (parking 槽)', () => {
+  it('clamps rank beyond topn to topn (parking 槽)', () => {
     // topN 内 unique 0..topN-1，topN 外全部停在 rank=topN（画面外一格）。
     const config = new Config({ topN: 2 })
     const samplers: Sampler[] = [
@@ -382,7 +383,7 @@ describe('dataprocessor.fillrank', () => {
     expect(frames[0].map(d => d.blurRank)).toEqual([0, 1, 2, 2, 2])
   })
 
-  it('keeps an absent-segment bar (alpha=0) at parkRank with value=baseline', () => {
+  it('keeps an absent-segment bar (alpha=0) at parkrank with value=baseline', () => {
     // topN=1，2 个 sampler：alpha=1 的 alpha 占 rank=0；beta 在段外 alpha=0
     // 落到 idx=1，parked 到 config.topN=1。
     const config = new Config({ topN: 1 })
@@ -410,7 +411,7 @@ describe('dataprocessor.fillrank', () => {
 })
 
 describe('dataprocessor.addtailingframes', () => {
-  it('alpha 由 applyVelocity 按 blurRank 改写：parking (blurRank=topN) → alpha=0', () => {
+  it('alpha 由 applyvelocity 按 blurrank 改写：parking (blurrank=topn) → alpha=0', () => {
     // 新设计：alpha 由 topN-blurRank clamp 决定，不再由 sampler 持有。
     const config = new Config({ topN: 2, swap: { durationSec: 1 }, fps: 2 })
     const createRanked = (step: number): RankedData => ({
@@ -474,7 +475,7 @@ describe('dataprocessor.applyvelocity', () => {
     return out
   }
 
-  it('stationary: no rank change → blurRank ≡ rank', () => {
+  it('stationary: no rank change → blurrank ≡ rank', () => {
     const config = new Config({ topN: 5, swap: { durationSec: 0.5 }, fps: 60 })
     const result = buildSegment(0, 1, 30, () => [['A', 0, 100], ['B', 1, 80], ['C', 2, 60]])
     DataProcessor.applyVelocity(config, result)
@@ -485,7 +486,7 @@ describe('dataprocessor.applyvelocity', () => {
     }
   })
 
-  it('1-rank swap: 对称守恒 A.blur + B.blur ≡ 1', () => {
+  it('1-rank swap: 对称守恒 a.blur + b.blur ≡ 1', () => {
     const config = new Config({ topN: 5, swap: { durationSec: 0.5 }, fps: 60 })
     const N = 120
     const result = buildSegment(0, 1, N, (i) => {
@@ -502,7 +503,7 @@ describe('dataprocessor.applyvelocity', () => {
     }
   })
 
-  it('1-rank swap: 在 swapDurationSec 内完成位移', () => {
+  it('1-rank swap: 在 swapdurationsec 内完成位移', () => {
     const config = new Config({ topN: 5, swap: { durationSec: 0.5 }, fps: 60 })
     // 30 帧 = swapDurationSec at fps=60。velocity 模型 1-rank 位移恰好耗时 D。
     const N = 120
@@ -537,7 +538,7 @@ describe('dataprocessor.applyvelocity', () => {
     }
   })
 
-  it('velocity smooth: 帧间速度变化 ≤ maxAccel × dt（除 touchdown 吸附帧）', () => {
+  it('velocity smooth: 帧间速度变化 ≤ maxaccel × dt（除 touchdown 吸附帧）', () => {
     const config = new Config({ topN: 5, swap: { durationSec: 0.5 }, fps: 60 })
     const D = config.swapDurationSec
     const fps = config.fps
@@ -567,7 +568,7 @@ describe('dataprocessor.applyvelocity', () => {
     expect(exceptions).toBeLessThanOrEqual(2)
   })
 
-  it('multi-rank jump: B 从 rank=3 直接降到 rank=0，单调收敛', () => {
+  it('multi-rank jump: b 从 rank=3 直接降到 rank=0，单调收敛', () => {
     const config = new Config({ topN: 5, swap: { durationSec: 0.5 }, fps: 60 })
     const N = 5 * 60
     const result = buildSegment(0, 1, N, (i) => {
@@ -587,7 +588,7 @@ describe('dataprocessor.applyvelocity', () => {
     }
   })
 
-  it('multi-rank jump: 速度受三角峰值 √(2·a·N/2) 限制，不会无限加速', () => {
+  it('multi-rank jump: 速度受三角峰值 √(2·a·n/2) 限制，不会无限加速', () => {
     // 新模型无 maxVel cap；峰值由 brakingVel 决定 = √(2·a·d_remaining)，
     // 最大可能峰值 = √(a·N) (在 d=N/2 处达到)。
     const config = new Config({ topN: 5, swap: { durationSec: 0.5 }, fps: 60 })
@@ -650,7 +651,7 @@ describe('dataprocessor.applyvelocity', () => {
     expect(exceptions).toBeLessThanOrEqual(4)
   })
 
-  it('blurRank 全程不越界 [0, N-1]', () => {
+  it('blurrank 全程不越界 [0, n-1]', () => {
     const config = new Config({ topN: 5, swap: { durationSec: 0.5 }, fps: 60 })
     const N = 6 * 60
     const result = buildSegment(0, 1, N, (i) => {
@@ -674,7 +675,7 @@ describe('dataprocessor.applyvelocity', () => {
     expect(last.find(d => d.id === 'A')!.blurRank).toBeCloseTo(4, 5)
   })
 
-  it('N > topN: topN 外 bar 升入 topN（rank unclamped, target 全局 unique）', () => {
+  it('n > topn: topn 外 bar 升入 topn（rank unclamped, target 全局 unique）', () => {
     const config = new Config({ topN: 3, swap: { durationSec: 0.5 }, fps: 60 })
     const N = 5 * 60
     const result = buildSegment(0, 1, N, (i) => {
@@ -698,7 +699,7 @@ describe('dataprocessor.applyvelocity', () => {
     }
   })
 
-  it('远距离 dataRank 反转：所有 bar 立即朝各自 dataRank 移动并收敛（不钉死在原位）', () => {
+  it('远距离 datarank 反转：所有 bar 立即朝各自 datarank 移动并收敛（不钉死在原位）', () => {
     const config = new Config({ topN: 5, swap: { durationSec: 0.5 }, fps: 60 })
     const N = 5 * 60
     const result = buildSegment(0, 1, N, (i) => {
@@ -750,11 +751,11 @@ describe('dataprocessor.applyvelocity', () => {
 })
 
 describe('dataprocessor.swapalgorithm.dispatch', () => {
-  it('default config.swapAlgorithm is "velocity"', () => {
+  it('default config.swapalgorithm is "velocity"', () => {
     expect(new Config().swapAlgorithm).toBe('velocity')
   })
 
-  it('addTailingFrames dispatches to velocity and writes blurRank', () => {
+  it('addtailingframes dispatches to velocity and writes blurrank', () => {
     const config = new Config({ topN: 2, swap: { durationSec: 0.5 }, fps: 60 })
     const makeOne = (id: string, rank: number, value: number): RankedData => ({
       id,
@@ -830,7 +831,7 @@ describe('dataprocessor.applyvelocityaccel', () => {
     return out
   }
 
-  it('boost=0 严格退化为 velocity（逐帧 blurRank 完全一致）', () => {
+  it('boost=0 严格退化为 velocity（逐帧 blurrank 完全一致）', () => {
     const valueAt = (id: string, t: number): number =>
       id === 'E' ? 10 + Math.min(1, t / 30) * 190 : ({ A: 100, B: 80, C: 60, D: 40 } as Record<string, number>)[id]
     const ids = ['A', 'B', 'C', 'D', 'E']
@@ -840,8 +841,8 @@ describe('dataprocessor.applyvelocityaccel', () => {
     const fa = framesFromValueFn(ids, 200, valueAt, 5)
     DataProcessor.applyVelocity(cfgV, fv)
     DataProcessor.applyVelocityAccel(cfgA, fa)
-    for (let t = 0; t < fv.length; t++) {
-      for (const d of fv[t]) {
+    for (const [t, element] of fv.entries()) {
+      for (const d of element) {
         expect(fa[t].find(x => x.id === d.id)!.blurRank).toBeCloseTo(d.blurRank, 9)
       }
     }

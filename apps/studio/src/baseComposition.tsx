@@ -62,9 +62,7 @@ const colorMap = new Map([
   ['Tencent', 0x41_69_E1],
 ])
 
-const modelNameMap = new Map([
-
-])
+const modelNameMap = new Map()
 
 const config = new Config({
   id: 'company',

@@ -219,12 +219,10 @@ export class BarComponent extends Container {
     const y = this.settings.y
     const nextLabel = label ?? ''
     let labelChanged = false
-    if (label !== undefined) {
-      if (nextLabel !== this.lastLabelText) {
-        leftLabel.text = nextLabel
-        this.lastLabelText = nextLabel
-        labelChanged = true
-      }
+    if (label !== undefined && nextLabel !== this.lastLabelText) {
+      leftLabel.text = nextLabel
+      this.lastLabelText = nextLabel
+      labelChanged = true
     }
 
     if (width !== undefined && height !== undefined) {

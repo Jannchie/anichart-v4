@@ -83,7 +83,7 @@ export class DataProcessor {
       }
     }
     else {
-      stepList = Array.from({ length: totalFrame }, () => startStep)
+      stepList = Array.from<number>({ length: totalFrame }).fill(startStep)
     }
     console.time('fillRank')
     const result = DataProcessor.fillRank(stepList, samplers, baselineScale, transitionSteps, carrySteps, config)
@@ -383,6 +383,8 @@ export class DataProcessor {
       }
       result.push(lastFrame.map(d => ({ ...d })))
     }
+    // SWAP_ALGORITHMS 在文件末尾定义（其值引用本类静态方法，无法上移否则 TDZ）；此处运行期调用，const 已初始化。
+    // eslint-disable-next-line ts/no-use-before-define
     const algo = SWAP_ALGORITHMS[config.swapAlgorithm]
     algo(config, result)
     DataProcessor.computeUpFlags(result)

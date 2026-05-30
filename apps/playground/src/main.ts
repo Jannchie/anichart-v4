@@ -295,7 +295,7 @@ function loop(now: number) {
 }
 
 function adjustSpeed(direction: 1 | -1) {
-  const currentIdx = SPEED_OPTIONS.findIndex(s => s === speed)
+  const currentIdx = (SPEED_OPTIONS as readonly number[]).indexOf(speed)
   const nextIdx = Math.min(SPEED_OPTIONS.length - 1, Math.max(0, currentIdx + direction))
   if (nextIdx !== currentIdx) {
     speed = SPEED_OPTIONS[nextIdx]
@@ -376,7 +376,7 @@ timeAxisSelect.addEventListener('change', () => {
   }
 })
 
-window.addEventListener('keydown', (e) => {
+globalThis.addEventListener('keydown', (e) => {
   const target = e.target as HTMLElement | null
   if (target && (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'TEXTAREA')) {
     return
@@ -385,36 +385,43 @@ window.addEventListener('keydown', (e) => {
     return
   }
   switch (e.code) {
-    case 'Space':
+    case 'Space': {
       e.preventDefault()
       setPauseState(!isPaused)
       break
-    case 'ArrowLeft':
+    }
+    case 'ArrowLeft': {
       e.preventDefault()
       stepBy(e.shiftKey ? -10 : -1)
       break
-    case 'ArrowRight':
+    }
+    case 'ArrowRight': {
       e.preventDefault()
       stepBy(e.shiftKey ? 10 : 1)
       break
-    case 'Home':
+    }
+    case 'Home': {
       e.preventDefault()
       setPauseState(true)
       renderFrame(0)
       break
-    case 'End':
+    }
+    case 'End': {
       e.preventDefault()
       setPauseState(true)
       renderFrame(data.length - 1)
       break
-    case 'BracketLeft':
+    }
+    case 'BracketLeft': {
       e.preventDefault()
       adjustSpeed(-1)
       break
-    case 'BracketRight':
+    }
+    case 'BracketRight': {
       e.preventDefault()
       adjustSpeed(1)
       break
+    }
   }
 })
 

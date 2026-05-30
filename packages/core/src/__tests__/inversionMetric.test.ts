@@ -7,7 +7,7 @@ function bar(id: string, value: number, blurRank: number, alpha = 1): RankedData
 }
 
 describe('computeinversionmetrics', () => {
-  it('no inversion when value desc aligns with blurRank asc', () => {
+  it('no inversion when value desc aligns with blurrank asc', () => {
     const frames = [[bar('A', 100, 0), bar('B', 80, 1), bar('C', 60, 2)]]
     const m = computeInversionMetrics(frames, { fps: 60 })
     expect(m.inversionFrames).toBe(0)
@@ -40,7 +40,7 @@ describe('computeinversionmetrics', () => {
     expect(m.inversionPairFrames).toBe(0)
   })
 
-  it('inversionSeconds = inversionFrames / fps', () => {
+  it('inversionseconds = inversionframes / fps', () => {
     const frame = [bar('B', 80, 0), bar('A', 100, 1)]
     const frames = [frame, frame, frame] // 3 帧都逆序
     const m = computeInversionMetrics(frames, { fps: 60 })
@@ -48,7 +48,7 @@ describe('computeinversionmetrics', () => {
     expect(m.inversionSeconds).toBeCloseTo(3 / 60, 9)
   })
 
-  it('smoothnessEnergy is 0 for a static blurRank trajectory, >0 when it accelerates', () => {
+  it('smoothnessenergy is 0 for a static blurrank trajectory, >0 when it accelerates', () => {
     const flat = [[bar('A', 100, 0)], [bar('A', 100, 0)], [bar('A', 100, 0)]]
     expect(computeInversionMetrics(flat, { fps: 60 }).smoothnessEnergy).toBeCloseTo(0, 9)
     const moving = [[bar('A', 100, 0)], [bar('A', 100, 1)], [bar('A', 100, 3)]]

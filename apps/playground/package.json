@@ -13,12 +13,12 @@
   "dependencies": {
     "@anichart/core": "workspace:*",
     "d3": "^7.9.0",
-    "dayjs": "^1.11.18",
-    "pixi.js": "^8.14.0"
+    "dayjs": "^1.11.21",
+    "pixi.js": "^8.18.1"
   },
   "devDependencies": {
     "@types/d3": "^7.4.3",
-    "typescript": "^5.9.3",
-    "vite": "^7.1.9"
+    "typescript": "^6.0.3",
+    "vite": "^8.0.14"
   }
 }

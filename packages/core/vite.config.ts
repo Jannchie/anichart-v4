@@ -5,7 +5,8 @@ import dts from 'vite-plugin-dts'
 
 export default defineConfig({
   plugins: [
-    dts({ tsconfigPath: './tsconfig.json', include: ['src'], exclude: ['src/__tests__/**'] }),
+    // entryRoot: 'src' 显式 strip src/ 前缀 → 输出扁平 dist/index.d.ts（vite-plugin-dts@5 默认改成保留 src/，会破坏 package.json 的 types 指向）
+    dts({ tsconfigPath: './tsconfig.json', include: ['src'], exclude: ['src/__tests__/**'], entryRoot: 'src' }),
   ],
   build: {
     lib: {
