@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# 同一分支新推送时取消进行中的旧运行
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: Lint · Typecheck · Test · Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # turbo 本地缓存：命中则跳过未变更的 task（CI 提速的主要来源）
+      - name: Restore turbo cache
+        uses: actions/cache@v4
+        with:
+          path: .turbo
+          key: turbo-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            turbo-${{ runner.os }}-
+
+      - name: Lint · Typecheck · Test · Build
+        run: pnpm exec turbo run lint typecheck test build --cache-dir=.turbo
+        env:
+          # web(Nuxt) 的 env 都是运行时读取（runtimeConfig + better-auth 惰性单例），
+          # 构建期不连库；给占位值仅为兜底任何模块级 process.env 读取，CI 不需要真密钥。
+          DATABASE_URL: postgres://ci:ci@localhost:5432/ci
+          BETTER_AUTH_SECRET: ci-placeholder-secret
+          BETTER_AUTH_URL: http://localhost:3000
