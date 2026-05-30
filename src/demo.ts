@@ -40,7 +40,7 @@ const chartPreferences = {
   line: {
     showLabel: true,
     title: 'LLM Elo Rating Trend',
-    xAxisLabel: 'LLM Elo Rating',
+    xAxisLabel: '',
   },
 } as const
 
@@ -111,6 +111,13 @@ algoSelect.add(new Option('velocity-accel', 'velocity-accel'))
 algoSelect.value = config.swapAlgorithm
 algoSelect.title = '换位算法（逆序对比）'
 
+const timeAxisSelect = makeSelect()
+timeAxisSelect.add(new Option('动态贴合', 'dynamic'))
+timeAxisSelect.add(new Option('完整时间轴', 'fixed'))
+timeAxisSelect.add(new Option('滚动时间窗', 'window'))
+timeAxisSelect.value = config.lineTimeAxisMode
+timeAxisSelect.title = '折线图时间轴模式'
+
 const firstFrameBtn = makeButton('⏮', '跳到首帧 (Home)')
 const prevFrameBtn = makeButton('◀', '后退一帧 (← / Shift+← 跳 10 帧)')
 const toggleButton = makeButton('⏸', '暂停 / 继续 (Space)')
@@ -144,6 +151,7 @@ speedSelect.title = '播放速率 ([ / ])'
 controls.append(
   chartSelect,
   algoSelect,
+  timeAxisSelect,
   makeDivider(),
   firstFrameBtn,
   prevFrameBtn,
@@ -243,10 +251,16 @@ function stepBy(delta: number) {
   renderFrame(next)
 }
 
+function syncTimeAxisSelectVisibility() {
+  // 时间轴模式仅对折线图有意义
+  timeAxisSelect.style.display = chartType === 'line' ? '' : 'none'
+}
+
 function rebuildChart() {
   if (data.length === 0) {
     return
   }
+  syncTimeAxisSelectVisibility()
   if (chart) {
     chart.removeFromParent()
     chart.destroy({ children: true })
@@ -354,6 +368,18 @@ chartSelect.addEventListener('change', () => {
   currentFrame = 0
   progress.value = '0'
   rebuildChart()
+})
+
+timeAxisSelect.addEventListener('change', () => {
+  const next = timeAxisSelect.value
+  if (next !== 'dynamic' && next !== 'fixed' && next !== 'window') {
+    return
+  }
+  config.lineTimeAxisMode = next
+  if (chartType === 'line') {
+    rebuildChart()
+    renderFrame(currentFrame)
+  }
 })
 
 window.addEventListener('keydown', (e) => {

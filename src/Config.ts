@@ -10,6 +10,12 @@ export type ValueScaleType = 'from-zero' | 'from-min' | 'from-delta' | 'adaptive
 //                      普通 1-rank 交换不受影响、惯性与 velocity 一致。swapAccelBoost=0 即退化为 velocity。
 export type SwapAlgorithmName = 'velocity' | 'velocity-accel'
 
+// 折线图时间轴（X 轴）模式：
+//   dynamic —— 跟随「当前活跃线」的时间跨度，右端=当前时刻，线始终填满宽度（赛跑式，默认）。
+//   fixed   —— 固定为完整 [起始, 结束]，线从左往右画入，能看绝对位置但常有留白。
+//   window  —— 只显示最近一段固定时长（lineTimeWindowRatio）的滚动时间窗，旧历史向左滚出。
+export type LineTimeAxisMode = 'dynamic' | 'fixed' | 'window'
+
 interface IConfig {
   canvasWidth: number
   canvasHeight: number
@@ -38,6 +44,8 @@ interface IConfig {
   // velocity-accel 专用旋钮（对 velocity 无效）：距离自适应加速度系数 a_eff = a·(1 + boost·max(0,|dist|−1))。
   //   0=退化为 velocity；越大暴涨柱收敛越快、逆序时间越短（也越快），普通 1-rank 交换永不受影响。
   swapAccelBoost: number
+  lineTimeAxisMode: LineTimeAxisMode
+  lineTimeWindowRatio: number // window 模式：时间窗占完整时间跨度的比例
   barGap: number
   barInfoPadding: number
   autoBarHeight: boolean
@@ -92,6 +100,8 @@ export class Config {
   swapAlgorithm: SwapAlgorithmName
   swapDurationSec: number
   swapAccelBoost: number
+  lineTimeAxisMode: LineTimeAxisMode
+  lineTimeWindowRatio: number
   barGap: number
   barHeight: number
   autoBarHeight: boolean = true
@@ -156,6 +166,8 @@ export class Config {
     // 多 rank 跳跃自然按 maxVel 巡航，时长 = D + (Δrank-1)/2 × D。
     this.swapDurationSec = 0.5
     this.swapAccelBoost = 2
+    this.lineTimeAxisMode = 'dynamic'
+    this.lineTimeWindowRatio = 0.35
     this.barGap = 4
     this.barHeight = 24
     this.valueScaleType = 'from-zero'

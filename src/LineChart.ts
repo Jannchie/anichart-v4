@@ -3,7 +3,6 @@ import type { Config } from './Config'
 import type { RankedData } from './Data'
 import { blur, extent, InternSet, scaleLinear } from 'd3'
 import { Container, Graphics, Text } from 'pixi.js'
-import { getValueScale } from './utils/scale'
 import { measureTextWidth } from './utils/textMetrics'
 
 const TITLE_FONT_SIZE = 36
@@ -30,7 +29,8 @@ function clamp01(value: number) {
   return clamp(value, 0, 1)
 }
 
-const valueScaleOptions = { ensureRange: true, zeroBaseline: 'min' } as const
+// 折线图纵轴上下各留的空白比例（相对当前 domain span），让线不贴边。
+const VALUE_SCALE_PADDING_RATIO = 0.06
 
 class LineSeries extends Container {
   private readonly line: Graphics
@@ -97,22 +97,32 @@ class LineSeries extends Container {
     const { showLabel, topN, plotWidth } = options
 
     const lastActiveIndex = this.findLastActiveIndex(frameIndex)
-    const activeCount = lastActiveIndex + 1
+    // 只把 alpha>0 的点纳入折线：跳过未入场 / 已离场 / 掉出 topN 的停车点
+    // （它们的 value=baseline，否则会画成一条贴底的水平线）。
+    let count = 0
     for (let i = 0; i <= lastActiveIndex; i += 1) {
       const point = this.points[i]
+      if (point.data.alpha <= 0) {
+        continue
+      }
       const rawX = getX(point)
-      const x = clamp(rawX, 0, plotWidth)
+      // x<0：早于当前时间窗左端的旧点（仅 window 模式会出现）→ 丢弃，让线从窗内起画。
+      if (rawX < 0) {
+        continue
+      }
+      const x = Math.min(rawX, plotWidth)
       const valueRatio = clamp01(valueScale(point.data.value))
       const y = plotHeight * (1 - valueRatio)
-      this.activePointBuffer[i] = point
-      this.xBuffer[i] = x
-      this.yBuffer[i] = y
+      this.activePointBuffer[count] = point
+      this.xBuffer[count] = x
+      this.yBuffer[count] = y
+      count += 1
     }
-    this.activePointBuffer.length = activeCount
-    this.xBuffer.length = activeCount
-    this.yBuffer.length = activeCount
+    this.activePointBuffer.length = count
+    this.xBuffer.length = count
+    this.yBuffer.length = count
 
-    if (activeCount === 0) {
+    if (count === 0) {
       this.renderable = false
       this.marker.visible = false
       this.marker.renderable = false
@@ -135,17 +145,17 @@ class LineSeries extends Container {
 
     const firstX = this.xBuffer[0]
     const firstY = this.yBuffer[0]
-    if (activeCount === 1) {
+    if (count === 1) {
       this.line.moveTo(firstX, firstY)
     }
     else {
       this.line.moveTo(firstX, firstY)
-      for (let i = 0; i < activeCount - 1; i += 1) {
+      for (let i = 0; i < count - 1; i += 1) {
         const currentX = this.xBuffer[i]
         const currentY = this.yBuffer[i]
         const nextX = this.xBuffer[i + 1]
         const nextY = this.yBuffer[i + 1]
-        if (i === activeCount - 2) {
+        if (i === count - 2) {
           this.line.quadraticCurveTo(currentX, currentY, nextX, nextY)
         }
         else {
@@ -157,11 +167,14 @@ class LineSeries extends Container {
     }
     this.line.stroke()
 
-    const lastIndex = activeCount - 1
+    const lastIndex = count - 1
     const lastPoint = this.activePointBuffer[lastIndex]
     const lastX = this.xBuffer[lastIndex]
     const lastY = this.yBuffer[lastIndex]
-    this.alpha = 1
+    // 整条线按「当前帧」该 id 的 alpha 淡入/淡出：入场 0→1、掉出 topN / 出场 1→0，
+    // 停车后 alpha=0 自然隐藏（几何冻结在最后一个真实点，不可见）。
+    const currentPoint = this.points[lastActiveIndex]
+    this.alpha = clamp01(currentPoint?.data.alpha ?? 1)
 
     this.marker.position.set(lastX, lastY)
 
@@ -213,10 +226,10 @@ export class LineChart extends Container {
   private leftMargin = 0
   private axisBaselineY = 0
 
+  // 每帧的 X(时间) scale，domain 为 step 区间、range 归一化到 [0,1]（× plotWidth 得像素）。
+  // 三种 lineTimeAxisMode 在 computeXScales 里产出不同的 domain。
+  private readonly frameXScales: ScaleLinear<number, number>[] = []
   private readonly stepDomain: [number, number]
-  private readonly indexDomain: [number, number]
-  private readonly xScale: ScaleLinear<number, number>
-  private readonly indexScale: ScaleLinear<number, number>
 
   constructor(data: RankedData[][], config: Config) {
     super()
@@ -236,7 +249,6 @@ export class LineChart extends Container {
       stepDomain = defaultIndexDomain
     }
     this.stepDomain = stepDomain
-    this.indexDomain = defaultIndexDomain
 
     this.yAxisTickContainer = new Container()
     this.seriesLayer = new Container()
@@ -288,6 +300,7 @@ export class LineChart extends Container {
     this.xAxisTickContainer.addChild(this.startTickLabel, this.endTickLabel)
 
     this.collectFrameStats()
+    this.computeXScales()
     this.prepareTickComponents()
     this.applyTickSmoothing()
 
@@ -305,9 +318,6 @@ export class LineChart extends Container {
     this.plotWidth = Math.max(config.width - this.leftMargin - this.rightPadding, 0)
     this.plotHeight = Math.max(config.height - titleOffset - this.xAxisTickHeight - xAxisLabelHeight - xAxisLabelPaddingUsed, 0)
     this.axisBaselineY = titleOffset + this.plotHeight
-
-    this.xScale = scaleLinear().domain(this.stepDomain).range([0, this.plotWidth])
-    this.indexScale = scaleLinear().domain(this.indexDomain).range([0, this.plotWidth])
 
     this.titleLabel.anchor.set(0.5, 0)
     this.titleLabel.position.set(config.width / 2, 0)
@@ -342,7 +352,11 @@ export class LineChart extends Container {
 
     this.populateSeries()
     this.refreshAxisGuides()
-    this.updateAxisTickTexts()
+    const initialScale = this.frameXScales[0]
+    if (initialScale) {
+      const [lo, hi] = initialScale.domain()
+      this.setXAxisLabels(lo, hi)
+    }
   }
 
   update(frameIndex: number) {
@@ -352,14 +366,10 @@ export class LineChart extends Container {
     const frameData = this.data[frameIndex]
     let valueScale = this.frameValueScales[frameIndex]
     if (!valueScale) {
-      const [min, max] = extent(frameData, d => d.value)
-      valueScale = getValueScale(
-        this.config.valueScaleType,
-        min,
-        max,
-        this.config.valueScaleDelta,
-        valueScaleOptions,
-      )
+      // 兜底（正常路径下 collectFrameStats 已预填）：下界看稳定点、上界看渐入点。
+      const [min] = extent(frameData.filter(d => d.alpha >= 1), d => d.value)
+      const [, max] = extent(frameData.filter(d => d.alpha > 0), d => d.value)
+      valueScale = this.buildValueScale(min ?? 0, max ?? 1)
       this.frameValueScales[frameIndex] = valueScale
     }
 
@@ -374,10 +384,12 @@ export class LineChart extends Container {
       tickContainer.position.set(0, y)
     }
 
+    const xScale = this.frameXScales[frameIndex] ?? this.frameXScales.at(-1)
+
     for (const series of this.seriesMap.values()) {
       series.update(
         frameIndex,
-        point => this.getXPosition(point),
+        point => this.getXPosition(point, xScale),
         valueScale,
         this.plotHeight,
         {
@@ -388,7 +400,11 @@ export class LineChart extends Container {
       )
     }
 
-    this.updateCurrentMarker(frameIndex)
+    this.updateCurrentMarker(frameIndex, xScale)
+    if (xScale) {
+      const [loStep, hiStep] = xScale.domain()
+      this.setXAxisLabels(loStep, hiStep)
+    }
 
     if (this.config.showStepLabel) {
       const currentStep = this.frameMaxSteps[frameIndex]
@@ -396,81 +412,156 @@ export class LineChart extends Container {
     }
   }
 
-  private collectFrameStats() {
-    const frameMinValues: number[] = []
-    const frameMaxValues: number[] = []
-    const runningMinValues: number[] = []
-    const runningMaxValues: number[] = []
-    let cumulativeMin = Number.POSITIVE_INFINITY
-    let cumulativeMax = Number.NEGATIVE_INFINITY
+  // 折线图专用的紧凑纵轴：domain 直接铺到 [min, max] 并上下各留 padding，让数据填满纵向空间。
+  // 不走 BarChart 的 adaptive 软饱和（那是为「柱长从轴底起算」设计的，会把下界拉到数据以下、
+  // 把折线挤到顶部一小条）。
+  private buildValueScale(min: number, max: number): ScaleLinear<number, number> {
+    let lo = Number.isFinite(min) ? min : 0
+    let hi = Number.isFinite(max) ? max : 1
+    if (lo > hi) {
+      [lo, hi] = [hi, lo]
+    }
+    const span = hi - lo
+    const pad = span > 0 ? span * VALUE_SCALE_PADDING_RATIO : (Math.abs(hi) * 0.01 || 1)
+    return scaleLinear().domain([lo - pad, hi + pad]).range([0, 1])
+  }
 
-    for (const [frameIndex, frame] of this.data.entries()) {
-      const [min, max] = extent(frame, this.config.getValue)
-      const safeMin = Number.isFinite(min) ? Number(min) : 0
-      const safeMax = Number.isFinite(max) ? Number(max) : 0
-      frameMinValues[frameIndex] = safeMin
-      frameMaxValues[frameIndex] = safeMax
-      if (frameIndex === 0) {
-        cumulativeMin = safeMin
-        cumulativeMax = safeMax
+  // 把 step 区间映射到 [0,1]；退化（lo>=hi，如首帧只有单一时刻）时给极小跨度，所有点落到左端。
+  private buildStepScale(lo: number, hi: number): ScaleLinear<number, number> {
+    const safeHi = hi > lo ? hi : lo + 1
+    return scaleLinear().domain([lo, safeHi]).range([0, 1])
+  }
+
+  // 按 lineTimeAxisMode 产出每帧的时间轴 scale：
+  //   fixed   —— 全程固定 [gMin, gMax]。
+  //   window  —— 右端=当前步，左端=当前步−窗宽（窗宽=lineTimeWindowRatio×全程跨度），左端不越过 gMin。
+  //   dynamic —— 右端=当前步（前沿贴右边缘），左端=当前活跃线里「最早已绘制步」的平滑值（与纵轴对称）。
+  private computeXScales() {
+    const T = this.data.length
+    const mode = this.config.lineTimeAxisMode
+    const [gMin, gMax] = this.stepDomain
+    const indexMax = Math.max(T - 1, 1)
+    const stepAt = (f: number) => {
+      const cur = this.frameMaxSteps[f]
+      return isFiniteNumber(cur) ? cur : gMin + (gMax - gMin) * (f / indexMax)
+    }
+
+    if (mode === 'fixed') {
+      const scale = this.buildStepScale(gMin, gMax)
+      for (let f = 0; f < T; f += 1) {
+        this.frameXScales[f] = scale
       }
-      else {
-        cumulativeMin = Math.min(cumulativeMin, safeMin)
-        cumulativeMax = Math.max(cumulativeMax, safeMax)
+      return
+    }
+
+    if (mode === 'window') {
+      const windowSpan = Math.max((gMax - gMin) * this.config.lineTimeWindowRatio, 1e-9)
+      for (let f = 0; f < T; f += 1) {
+        const hi = stepAt(f)
+        const lo = Math.max(gMin, hi - windowSpan)
+        this.frameXScales[f] = this.buildStepScale(lo, hi)
       }
-      runningMinValues[frameIndex] = cumulativeMin
-      runningMaxValues[frameIndex] = cumulativeMax
-      this.frameValueScales[frameIndex] = getValueScale(
-        this.config.valueScaleType,
-        safeMin,
-        safeMax,
-        this.config.valueScaleDelta,
-        valueScaleOptions,
-      )
-      this.frameIdSets[frameIndex] = new InternSet(frame.map(item => item.id))
-      if (frame.length > 0) {
-        let maxStep = frame[0].step
-        for (let idx = 1; idx < frame.length; idx += 1) {
-          if (frame[idx].step > maxStep) {
-            maxStep = frame[idx].step
+      return
+    }
+
+    // dynamic：每条序列记录它「首个 alpha>0（已绘制）步」；每帧左端取当前活跃序列里最早的那个。
+    const firstDrawnStep = new Map<string, number>()
+    const rawMin: number[] = Array.from({ length: T }, () => gMin)
+    const rawMax: number[] = Array.from({ length: T }, () => gMin)
+    for (let f = 0; f < T; f += 1) {
+      const cur = stepAt(f)
+      let lo = Number.POSITIVE_INFINITY
+      for (const item of this.data[f]) {
+        if (item.alpha <= 0) {
+          continue
+        }
+        let first = firstDrawnStep.get(item.id)
+        if (first === undefined) {
+          first = isFiniteNumber(item.step) ? item.step : cur
+          firstDrawnStep.set(item.id, first)
+        }
+        if (first < lo) {
+          lo = first
+        }
+      }
+      rawMin[f] = Number.isFinite(lo) ? lo : cur
+      rawMax[f] = cur
+    }
+    // 平滑左端，减少入场/掉榜时左边界跳动；右端保持精确=当前步。min(平滑, 原始) 保证不裁切已绘制点。
+    const smoothingRadius = Math.max(0, Math.floor(this.config.valueScaleSmoothing))
+    let smoothedMin = [...rawMin]
+    if (smoothingRadius > 0 && T > 1) {
+      smoothedMin = [...blur([...rawMin], smoothingRadius) as Float64Array]
+    }
+    for (let f = 0; f < T; f += 1) {
+      const sMin = Number.isNaN(smoothedMin[f]) ? rawMin[f] : smoothedMin[f]
+      this.frameXScales[f] = this.buildStepScale(Math.min(sMin, rawMin[f]), rawMax[f])
+    }
+  }
+
+  private collectFrameStats() {
+    const T = this.data.length
+    const frameMinValues: number[] = Array.from({ length: T }, () => 0)
+    const frameMaxValues: number[] = Array.from({ length: T }, () => 0)
+
+    // 动态纵轴：每帧的 domain 只汇总「当前活跃」(alpha>0) 序列「已绘制真实数据」的 min/max。
+    //   - prefMin/prefMax：每条序列对其 alpha>=1 的真实点累计前缀极值（含入场以来的历史），
+    //     保证已经画出的折线永远落在框内、不被裁切；
+    //   - 只取当前活跃序列 → 未入场 / 已出场 / 掉出 topN 的序列不再钉住值域，
+    //     纵轴随榜单上移、收紧，不会"感觉固定"；
+    //   - 入场/出场 ramp（alpha∈(0,1)）向 baseline 俯冲，不计入 domain（否则又把下界拉穿底）。
+    const prefMin = new Map<string, number>()
+    const prefMax = new Map<string, number>()
+
+    for (let f = 0; f < T; f += 1) {
+      const frame = this.data[f]
+      let lo = Number.POSITIVE_INFINITY
+      let hi = Number.NEGATIVE_INFINITY
+      for (const item of frame) {
+        if (item.alpha >= 1 && Number.isFinite(item.value)) {
+          const pmin = prefMin.get(item.id)
+          prefMin.set(item.id, pmin === undefined ? item.value : Math.min(pmin, item.value))
+          const pmax = prefMax.get(item.id)
+          prefMax.set(item.id, pmax === undefined ? item.value : Math.max(pmax, item.value))
+        }
+        if (item.alpha > 0) {
+          const pmin = prefMin.get(item.id)
+          const pmax = prefMax.get(item.id)
+          if (pmin !== undefined && pmin < lo) {
+            lo = pmin
+          }
+          if (pmax !== undefined && pmax > hi) {
+            hi = pmax
           }
         }
-        this.frameMaxSteps[frameIndex] = maxStep
       }
-      else {
-        this.frameMaxSteps[frameIndex] = undefined
+      if (!Number.isFinite(lo)) {
+        lo = 0
+        hi = 0
       }
+      frameMinValues[f] = lo
+      frameMaxValues[f] = hi
+      this.frameIdSets[f] = new InternSet(frame.map(item => item.id))
+      // 同帧所有 item 共享 step（fillRank 写入），取首个即可。
+      this.frameMaxSteps[f] = frame.length > 0 ? frame[0].step : undefined
     }
 
     const smoothingRadius = Math.max(0, Math.floor(this.config.valueScaleSmoothing))
     let smoothedMinValues = [...frameMinValues]
     let smoothedMaxValues = [...frameMaxValues]
-    if (smoothingRadius > 0 && this.data.length > 1) {
-      smoothedMinValues = [...blur(frameMinValues, smoothingRadius) as Float64Array]
-      smoothedMaxValues = [...blur(frameMaxValues, smoothingRadius) as Float64Array]
-      for (let i = 0; i < this.data.length; i += 1) {
-        if (Number.isNaN(smoothedMinValues[i])) {
-          smoothedMinValues[i] = frameMinValues[i] ?? 0
-        }
-        if (Number.isNaN(smoothedMaxValues[i])) {
-          smoothedMaxValues[i] = frameMaxValues[i] ?? 0
-        }
-      }
+    if (smoothingRadius > 0 && T > 1) {
+      smoothedMinValues = [...blur([...frameMinValues], smoothingRadius) as Float64Array]
+      smoothedMaxValues = [...blur([...frameMaxValues], smoothingRadius) as Float64Array]
     }
-    for (let i = 0; i < this.data.length; i += 1) {
-      const smoothedMin = smoothedMinValues[i] ?? frameMinValues[i] ?? 0
-      const smoothedMax = smoothedMaxValues[i] ?? frameMaxValues[i] ?? 0
-      const cumulativeMinValue = runningMinValues[i] ?? smoothedMin
-      const cumulativeMaxValue = runningMaxValues[i] ?? smoothedMax
-      const domainMin = Math.min(smoothedMin, cumulativeMinValue)
-      const domainMax = Math.max(smoothedMax, cumulativeMaxValue)
-      this.frameValueScales[i] = getValueScale(
-        this.config.valueScaleType,
-        domainMin,
-        domainMax,
-        this.config.valueScaleDelta,
-        valueScaleOptions,
-      )
+    for (let f = 0; f < T; f += 1) {
+      const rawMin = frameMinValues[f]
+      const rawMax = frameMaxValues[f]
+      const sMin = Number.isNaN(smoothedMinValues[f]) ? rawMin : smoothedMinValues[f]
+      const sMax = Number.isNaN(smoothedMaxValues[f]) ? rawMax : smoothedMaxValues[f]
+      // 平滑只用来让纵轴变化更顺；最终 domain 仍须包住当帧真实数据，避免折线被裁切。
+      const domainMin = Math.min(sMin, rawMin)
+      const domainMax = Math.max(sMax, rawMax)
+      this.frameValueScales[f] = this.buildValueScale(domainMin, domainMax)
     }
   }
 
@@ -594,20 +685,12 @@ export class LineChart extends Container {
     this.xAxisLine.stroke()
   }
 
-  private updateCurrentMarker(frameIndex: number) {
+  private updateCurrentMarker(frameIndex: number, xScale: ScaleLinear<number, number>) {
     const frame = this.data[frameIndex]
-    const primaryStep = frame[0]?.step
-    const fallbackStep = this.frameMaxSteps[frameIndex]
-    let markerX: number
-    if (isFiniteNumber(primaryStep)) {
-      markerX = this.clampToPlot(this.xScale(primaryStep))
-    }
-    else if (isFiniteNumber(fallbackStep)) {
-      markerX = this.clampToPlot(this.xScale(fallbackStep))
-    }
-    else {
-      markerX = this.clampToPlot(this.indexScale(frameIndex))
-    }
+    const currentStep = this.frameMaxSteps[frameIndex] ?? frame[0]?.step
+    const markerX = isFiniteNumber(currentStep) && xScale
+      ? this.clampToPlot(xScale(currentStep) * this.plotWidth)
+      : this.clampToPlot((frameIndex / Math.max(this.data.length - 1, 1)) * this.plotWidth)
 
     this.currentMarker.clear()
     this.currentMarker.setStrokeStyle({
@@ -620,37 +703,20 @@ export class LineChart extends Container {
     this.currentMarker.stroke()
   }
 
-  private updateAxisTickTexts() {
-    const firstStep = this.findFirstDefinedStep()
-    const lastStep = this.findLastDefinedStep()
-    this.startTickLabel.text = firstStep === undefined ? '' : this.config.getStepLabel(firstStep)
-    this.endTickLabel.text = lastStep === undefined ? '' : this.config.getStepLabel(lastStep)
+  private setXAxisLabels(loStep: number, hiStep: number) {
+    this.startTickLabel.text = isFiniteNumber(loStep) ? this.config.getStepLabel(loStep) : ''
+    this.endTickLabel.text = isFiniteNumber(hiStep) ? this.config.getStepLabel(hiStep) : ''
     this.endTickLabel.position.set(this.plotWidth, 0)
   }
 
-  private findFirstDefinedStep() {
-    for (const value of this.frameMaxSteps) {
-      if (value !== undefined) {
-        return value
-      }
-    }
-  }
-
-  private findLastDefinedStep() {
-    for (let i = this.frameMaxSteps.length - 1; i >= 0; i -= 1) {
-      const value = this.frameMaxSteps[i]
-      if (value !== undefined) {
-        return value
-      }
-    }
-  }
-
-  private getXPosition(point: SeriesPoint) {
+  // 返回未裁剪的像素 X（可能 <0：早于当帧时间窗左端的点）。LineSeries 据此丢弃窗外的旧点。
+  private getXPosition(point: SeriesPoint, xScale: ScaleLinear<number, number>) {
     const step = point.data.step
-    if (isFiniteNumber(step)) {
-      return this.clampToPlot(this.xScale(step))
+    if (xScale && isFiniteNumber(step)) {
+      return xScale(step) * this.plotWidth
     }
-    return this.clampToPlot(this.indexScale(point.frameIndex))
+    const idxRatio = point.frameIndex / Math.max(this.data.length - 1, 1)
+    return idxRatio * this.plotWidth
   }
 
   private clampToPlot(value: number) {
