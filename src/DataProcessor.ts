@@ -469,6 +469,81 @@ export class DataProcessor {
     }
   }
 
+  // velocity-accel：velocity 的纯反馈速度模型 + 距离自适应加速度。唯一改动是把固定加速度 a 换成
+  //   a_eff = a·(1 + swapAccelBoost·max(0,|dist|−1))：
+  //     |dist|≤1 的普通 1-rank 交换 a 原样不变 → 惯性观感、稳态等距槽与 velocity 完全一致；
+  //     暴涨穿多级（|dist| 大）时加速度变大、到达时间从线性压成次线性 → 压缩 blurRank 滞后 value-rank
+  //     的逆序时间。swapAccelBoost=0 严格退化为 velocity。
+  // 刻意不引入 softRank/前馈：前馈的 d(softRank)/dt 含 ε 抖动噪声，被 /dt 放大后会推动「无关柱」原地
+  //   上下抽搐（实测方向反转数 20×），故弃用——boost 单独即可压逆序且零抽搐、运动全程平滑。
+  // 通过 SWAP_ALGORITHMS 派发。
+  static applyVelocityAccel(config: Config, result: RankedData[][]) {
+    const T = result.length
+    if (T === 0 || result[0].length === 0) {
+      return
+    }
+    const dt = 1 / config.fps
+    const D = Math.max(1e-6, config.swapDurationSec)
+    const maxAccel = 32 / (D * D)
+    const minVel = 2 / D
+    const topN = config.topN
+    const boost = config.swapAccelBoost
+
+    const visualRank = new Map<string, number>()
+    const velocity = new Map<string, number>()
+
+    const writeAlpha = (d: RankedData) => {
+      const parkingMask = Math.max(0, Math.min(1, topN - d.blurRank))
+      d.alpha = Math.min(d.alpha, parkingMask)
+    }
+
+    const seed = (d: RankedData) => {
+      visualRank.set(d.id, d.rank)
+      velocity.set(d.id, 0)
+      d.blurRank = d.rank
+      writeAlpha(d)
+    }
+
+    for (const d of result[0]) {
+      seed(d)
+    }
+
+    for (let t = 1; t < T; t++) {
+      for (const d of result[t]) {
+        if (!visualRank.has(d.id)) {
+          seed(d)
+          continue
+        }
+        const vrPrev = visualRank.get(d.id)!
+        const target = d.rank
+        const dist = target - vrPrev
+        const absDist = Math.abs(dist)
+        // 距离自适应加速度：dist 越大加速度越大，暴涨柱更快收敛；dist≤1 时 aEff=maxAccel（不变）。
+        const aEff = maxAccel * (1 + boost * Math.max(0, absDist - 1))
+        const maxDv = aEff * dt
+        const desired = absDist < 1e-9
+          ? 0
+          : Math.sign(dist) * Math.max(minVel, Math.sqrt(2 * aEff * absDist))
+
+        let v = velocity.get(d.id)!
+        v += Math.max(-maxDv, Math.min(maxDv, desired - v))
+        let vr = vrPrev + v * dt
+
+        // 越过 target，或已贴住且低速 → 吸附停住（收敛 + 防漂移）。
+        const overshot = (dist > 0 && vr > target) || (dist < 0 && vr < target)
+        if (overshot || (Math.abs(target - vr) < 1e-4 && Math.abs(v) < minVel)) {
+          vr = target
+          v = 0
+        }
+
+        visualRank.set(d.id, vr)
+        velocity.set(d.id, v)
+        d.blurRank = vr
+        writeAlpha(d)
+      }
+    }
+  }
+
   // up 状态用 blurRank 帧间变化判定。仅在接近整数 rank 时更新，避免过渡中翻转。
   private static computeUpFlags(result: RankedData[][]) {
     const byID = group(result.flat(), d => d.id)
@@ -527,5 +602,6 @@ export class DataProcessor {
 
 // Strategy 注册表：新增算法只需 union 加 name + 这里注册即可。
 const SWAP_ALGORITHMS: Record<SwapAlgorithmName, SwapAlgorithm> = {
-  velocity: DataProcessor.applyVelocity,
+  'velocity': DataProcessor.applyVelocity,
+  'velocity-accel': DataProcessor.applyVelocityAccel,
 }

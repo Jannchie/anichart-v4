@@ -1,10 +1,12 @@
 import type { RankedData } from './Data'
 import dayjs from 'dayjs'
+import './style.css'
 import { Application } from 'pixi.js'
 import { BarChart } from './BarChart'
 import { Config } from './Config'
 import { DataProcessor } from './DataProcessor'
 import { LineChart } from './LineChart'
+import { computeInversionMetrics } from './utils/inversionMetric'
 
 const app = new Application()
 const ratingFormatter = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 })
@@ -19,6 +21,7 @@ const config = new Config({
   showLabel: false,
   showStepLabel: true,
   valueScaleType: 'adaptive',
+  swapAlgorithm: 'velocity-accel',
   getStep: d => Number(d.date) * 1000,
   getStepLabel: step => dayjs(step).format('YYYY-MM-DD'),
   getValueLabel: data => ratingFormatter.format(data.value),
@@ -76,57 +79,24 @@ canvasContainer.style.backgroundColor = '#111111'
 root.append(canvasContainer)
 
 const controls = document.createElement('div')
-controls.style.position = 'absolute'
-controls.style.left = '50%'
-controls.style.bottom = '24px'
-controls.style.transform = 'translateX(-50%)'
-controls.style.display = 'flex'
-controls.style.alignItems = 'center'
-controls.style.gap = '10px'
-controls.style.padding = '10px 14px'
-controls.style.background = 'rgba(0, 0, 0, 0.56)'
-controls.style.borderRadius = '12px'
-controls.style.backdropFilter = 'blur(6px)'
-controls.style.boxShadow = '0 6px 18px rgba(0, 0, 0, 0.45)'
-controls.style.userSelect = 'none'
+controls.className = 'controls'
 canvasContainer.append(controls)
 
 function makeButton(label: string, title: string) {
   const btn = document.createElement('button')
   btn.textContent = label
   btn.title = title
-  btn.style.padding = '4px 10px'
-  btn.style.minWidth = '34px'
-  btn.style.height = '30px'
-  btn.style.background = 'rgba(255, 255, 255, 0.12)'
-  btn.style.border = '1px solid rgba(255, 255, 255, 0.24)'
-  btn.style.borderRadius = '6px'
-  btn.style.color = '#ffffff'
-  btn.style.fontSize = '14px'
-  btn.style.fontFamily = 'inherit'
-  btn.style.cursor = 'pointer'
-  btn.style.transition = 'background 0.15s ease'
-  btn.addEventListener('mouseenter', () => {
-    btn.style.background = 'rgba(255, 255, 255, 0.22)'
-  })
-  btn.addEventListener('mouseleave', () => {
-    btn.style.background = 'rgba(255, 255, 255, 0.12)'
-  })
   return btn
 }
 
 function makeSelect() {
-  const sel = document.createElement('select')
-  sel.style.padding = '4px 8px'
-  sel.style.height = '30px'
-  sel.style.background = 'rgba(255, 255, 255, 0.12)'
-  sel.style.border = '1px solid rgba(255, 255, 255, 0.24)'
-  sel.style.borderRadius = '6px'
-  sel.style.color = '#ffffff'
-  sel.style.fontSize = '13px'
-  sel.style.fontFamily = 'inherit'
-  sel.style.cursor = 'pointer'
-  return sel
+  return document.createElement('select')
+}
+
+function makeDivider() {
+  const divider = document.createElement('span')
+  divider.className = 'ctrl-divider'
+  return divider
 }
 
 const chartSelect = makeSelect()
@@ -134,6 +104,12 @@ chartSelect.add(new Option('Bar', 'bar'))
 chartSelect.add(new Option('Line', 'line'))
 chartSelect.value = 'bar'
 chartSelect.title = '图表类型'
+
+const algoSelect = makeSelect()
+algoSelect.add(new Option('velocity', 'velocity'))
+algoSelect.add(new Option('velocity-accel', 'velocity-accel'))
+algoSelect.value = config.swapAlgorithm
+algoSelect.title = '换位算法（逆序对比）'
 
 const firstFrameBtn = makeButton('⏮', '跳到首帧 (Home)')
 const prevFrameBtn = makeButton('◀', '后退一帧 (← / Shift+← 跳 10 帧)')
@@ -147,23 +123,15 @@ progress.min = '0'
 progress.max = '0'
 progress.value = '0'
 progress.step = '1'
-progress.style.width = '260px'
-progress.style.cursor = 'pointer'
+progress.className = 'ctrl-progress'
 
 const timeLabel = document.createElement('span')
 timeLabel.textContent = '00:00 / 00:00'
-timeLabel.style.fontSize = '13px'
-timeLabel.style.minWidth = '110px'
-timeLabel.style.textAlign = 'center'
-timeLabel.style.fontVariantNumeric = 'tabular-nums'
+timeLabel.className = 'ctrl-label'
 
 const frameLabel = document.createElement('span')
 frameLabel.textContent = 'f0 / f0'
-frameLabel.style.fontSize = '13px'
-frameLabel.style.minWidth = '110px'
-frameLabel.style.textAlign = 'center'
-frameLabel.style.fontVariantNumeric = 'tabular-nums'
-frameLabel.style.color = '#9aa0a6'
+frameLabel.className = 'ctrl-label ctrl-label--muted'
 frameLabel.title = '当前帧 / 总帧数'
 
 const speedSelect = makeSelect()
@@ -175,14 +143,18 @@ speedSelect.title = '播放速率 ([ / ])'
 
 controls.append(
   chartSelect,
+  algoSelect,
+  makeDivider(),
   firstFrameBtn,
   prevFrameBtn,
   toggleButton,
   nextFrameBtn,
   lastFrameBtn,
+  makeDivider(),
   progress,
   timeLabel,
   frameLabel,
+  makeDivider(),
   speedSelect,
 )
 
@@ -243,6 +215,13 @@ function setPauseState(paused: boolean) {
   syncButtonState()
 }
 
+function updateProgressFill() {
+  const max = Number(progress.max) || 0
+  const value = Number(progress.value) || 0
+  const pct = max > 0 ? (value / max) * 100 : 0
+  progress.style.setProperty('--range-progress', `${pct}%`)
+}
+
 function renderFrame(frame: number) {
   if (!chart || data.length === 0) {
     return
@@ -250,6 +229,7 @@ function renderFrame(frame: number) {
   const safeFrame = Math.min(Math.max(frame, 0), data.length - 1)
   chart.update(safeFrame)
   progress.value = safeFrame.toString()
+  updateProgressFill()
   currentFrame = safeFrame
   syncTimeLabel()
 }
@@ -425,7 +405,29 @@ function handleResize() {
   rebuildChart()
 }
 
-(async () => {
+async function loadData() {
+  data = await DataProcessor.processCSV('/llm.csv', config)
+  const m = computeInversionMetrics(data, { fps: config.fps })
+  // eslint-disable-next-line no-console
+  console.log(
+    `[${config.swapAlgorithm}] 逆序帧 ${m.inversionFrames} (${m.inversionSeconds.toFixed(1)}s) · `
+    + `逆序对×帧 ${m.inversionPairFrames} · 单帧最深 ${m.maxDepth} · 惯性能量 ${m.smoothnessEnergy.toFixed(0)}`,
+  )
+}
+
+algoSelect.addEventListener('change', async () => {
+  config.swapAlgorithm = algoSelect.value === 'velocity' ? 'velocity' : 'velocity-accel'
+  const keepFrame = currentFrame
+  setPauseState(true)
+  await loadData()
+  const maxFrame = Math.max(data.length - 1, 0)
+  progress.max = maxFrame.toString()
+  currentFrame = Math.min(keepFrame, maxFrame)
+  rebuildChart()
+  renderFrame(currentFrame)
+})
+
+;(async () => {
   try {
     await app.init({
       backgroundColor: config.backgroundColor,
@@ -443,7 +445,7 @@ function handleResize() {
 
     window.addEventListener('resize', handleResize)
 
-    data = await DataProcessor.processCSV('/llm.csv', config)
+    await loadData()
     const maxFrame = Math.max(data.length - 1, 0)
     progress.max = maxFrame.toString()
     progress.disabled = data.length === 0

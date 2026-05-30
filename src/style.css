@@ -1,6 +1,173 @@
+:root {
+  --ctrl-bg: rgba(22, 22, 26, 0.72);
+  --ctrl-border: rgba(255, 255, 255, 0.08);
+  --ctrl-fg: #f4f5f6;
+  --ctrl-muted: #9aa0a6;
+  --ctrl-hover: rgba(255, 255, 255, 0.08);
+  --ctrl-active: rgba(255, 255, 255, 0.14);
+  --ctrl-accent: #5b8cff;
+}
+
 body {
-    font-family: 'Berkeley Mono', monospace;
-    margin: 0;
-    padding: 0;
-    background-color: #000;
+  font-family: 'Berkeley Mono', monospace;
+  margin: 0;
+  padding: 0;
+  background-color: #111;
+}
+
+/* ---- Playground control panel ---- */
+.controls {
+  position: absolute;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  background: var(--ctrl-bg);
+  border: 1px solid var(--ctrl-border);
+  border-radius: 14px;
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  color: var(--ctrl-fg);
+  font-family: inherit;
+  user-select: none;
+}
+
+.ctrl-divider {
+  width: 1px;
+  align-self: stretch;
+  margin: 4px;
+  background: var(--ctrl-border);
+}
+
+.controls button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  height: 32px;
+  padding: 0 8px;
+  background: transparent;
+  border: none;
+  border-radius: 9px;
+  color: var(--ctrl-fg);
+  font-size: 14px;
+  font-family: inherit;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.08s ease;
+}
+.controls button:hover {
+  background: var(--ctrl-hover);
+}
+.controls button:active {
+  background: var(--ctrl-active);
+  transform: scale(0.92);
+}
+.controls button:focus-visible {
+  outline: 2px solid var(--ctrl-accent);
+  outline-offset: 1px;
+}
+
+.controls select {
+  height: 32px;
+  padding: 0 28px 0 10px;
+  background-color: var(--ctrl-hover);
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239aa0a6' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'><path d='M6 9l6 6 6-6'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+  border: 1px solid var(--ctrl-border);
+  border-radius: 9px;
+  color: var(--ctrl-fg);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  transition: background-color 0.15s ease;
+}
+.controls select:hover {
+  background-color: var(--ctrl-active);
+}
+.controls select:focus-visible {
+  outline: 2px solid var(--ctrl-accent);
+  outline-offset: 1px;
+}
+.controls option {
+  background: #1b1b1f;
+  color: var(--ctrl-fg);
+}
+
+.ctrl-label {
+  min-width: 104px;
+  text-align: center;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ctrl-fg);
+}
+.ctrl-label--muted {
+  color: var(--ctrl-muted);
+}
+
+.ctrl-progress {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 240px;
+  height: 32px;
+  margin: 0 4px;
+  background: transparent;
+  cursor: pointer;
+}
+.ctrl-progress::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background: linear-gradient(
+    to right,
+    var(--ctrl-accent) 0%,
+    var(--ctrl-accent) var(--range-progress, 0%),
+    rgba(255, 255, 255, 0.16) var(--range-progress, 0%),
+    rgba(255, 255, 255, 0.16) 100%
+  );
+}
+.ctrl-progress::-moz-range-track {
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+}
+.ctrl-progress::-moz-range-progress {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--ctrl-accent);
+}
+.ctrl-progress::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  transition: transform 0.1s ease;
+}
+.ctrl-progress::-webkit-slider-thumb:hover {
+  transform: scale(1.18);
+}
+.ctrl-progress::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: none;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+}
+.ctrl-progress:focus-visible {
+  outline: none;
+}
+.ctrl-progress:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 4px rgba(91, 140, 255, 0.4);
 }

@@ -2,6 +2,7 @@ import type { Data, RankedData } from '../Data'
 import { describe, expect, it } from 'vitest'
 import { Config } from '../Config'
 import { DataProcessor } from '../DataProcessor'
+import { computeInversionMetrics } from '../utils/inversionMetric'
 
 interface Segment {
   firstStep: number
@@ -799,5 +800,96 @@ describe('dataprocessor.preprocess', () => {
     expect(entry?.name).toBe('01')
     expect(typeof entry?.name).toBe('string')
     expect(entry?.metric).toBe(10)
+  })
+})
+
+describe('dataprocessor.applyvelocityaccel', () => {
+  // 按 value 自动定 rank 的真实帧构造器（等价 fillRank 的「排序 + parking」，但不依赖 sampler）。
+  function framesFromValueFn(
+    ids: string[],
+    T: number,
+    valueAt: (id: string, t: number) => number,
+    topN: number,
+  ): RankedData[][] {
+    const out: RankedData[][] = []
+    for (let t = 0; t < T; t++) {
+      const arr = ids.map(id => ({ id, value: valueAt(id, t) }))
+      arr.sort((a, b) => b.value - a.value)
+      out.push(arr.map((e, idx) => ({
+        id: e.id,
+        label: e.id,
+        value: e.value,
+        step: t,
+        alpha: 1,
+        raw: { id: e.id },
+        up: false,
+        rank: Math.min(idx, topN),
+        blurRank: 0,
+      })))
+    }
+    return out
+  }
+
+  it('boost=0 严格退化为 velocity（逐帧 blurRank 完全一致）', () => {
+    const valueAt = (id: string, t: number): number =>
+      id === 'E' ? 10 + Math.min(1, t / 30) * 190 : ({ A: 100, B: 80, C: 60, D: 40 } as Record<string, number>)[id]
+    const ids = ['A', 'B', 'C', 'D', 'E']
+    const cfgV = new Config({ topN: 5, swapDurationSec: 0.5, fps: 60 })
+    const cfgA = new Config({ topN: 5, swapDurationSec: 0.5, fps: 60, swapAccelBoost: 0 })
+    const fv = framesFromValueFn(ids, 200, valueAt, 5)
+    const fa = framesFromValueFn(ids, 200, valueAt, 5)
+    DataProcessor.applyVelocity(cfgV, fv)
+    DataProcessor.applyVelocityAccel(cfgA, fa)
+    for (let t = 0; t < fv.length; t++) {
+      for (const d of fv[t]) {
+        expect(fa[t].find(x => x.id === d.id)!.blurRank).toBeCloseTo(d.blurRank, 9)
+      }
+    }
+  })
+
+  it('steady state: value 不变 → 收敛到整数 rank 且全程不动', () => {
+    const config = new Config({ topN: 5, swapDurationSec: 0.5, fps: 60, swapAccelBoost: 2 })
+    const stable: Record<string, number> = { A: 100, B: 80, C: 60 }
+    const frames = framesFromValueFn(['A', 'B', 'C'], 120, id => stable[id], 5)
+    DataProcessor.applyVelocityAccel(config, frames)
+    const last = frames.at(-1)!
+    expect(last.find(d => d.id === 'A')!.blurRank).toBeCloseTo(0, 9)
+    expect(last.find(d => d.id === 'B')!.blurRank).toBeCloseTo(1, 9)
+    expect(last.find(d => d.id === 'C')!.blurRank).toBeCloseTo(2, 9)
+  })
+
+  it('暴涨 bar: accel 压逆序时间、保留惯性、且不引入抽搐（无关柱不抖）', () => {
+    const topN = 5
+    const T = 300
+    const rampFrames = 30 // 0.5s 内从底冲到顶
+    const stable: Record<string, number> = { A: 100, B: 80, C: 60, D: 40 }
+    const valueAt = (id: string, t: number): number => {
+      if (id === 'E') {
+        const p = Math.min(1, t / rampFrames)
+        return 10 + p * (200 - 10) // 10 → 200，之后保持
+      }
+      return stable[id]
+    }
+    const ids = ['A', 'B', 'C', 'D', 'E']
+    const config = new Config({ topN, swapDurationSec: 0.5, fps: 60, swapAccelBoost: 2 })
+    const framesVel = framesFromValueFn(ids, T, valueAt, topN)
+    const framesAccel = framesFromValueFn(ids, T, valueAt, topN)
+    DataProcessor.applyVelocity(config, framesVel)
+    DataProcessor.applyVelocityAccel(config, framesAccel)
+
+    const mVel = computeInversionMetrics(framesVel, { fps: 60 })
+    const mAccel = computeInversionMetrics(framesAccel, { fps: 60 })
+
+    // 对照组确有逆序，否则对比无意义。
+    expect(mVel.inversionPairFrames).toBeGreaterThan(0)
+    // 核心目标：逆序时间（逆序对×帧）显著下降。
+    expect(mAccel.inversionPairFrames).toBeLessThan(mVel.inversionPairFrames)
+    // 惯性保留：纵向运动仍有加减速能量，没有被压成瞬移/匀速。
+    expect(mAccel.smoothnessEnergy).toBeGreaterThan(0)
+    // 不抽搐：方向反转次数不超过 velocity（前馈方案会暴涨 10×+，accel 不会）。
+    expect(mAccel.directionReversals).toBeLessThanOrEqual(mVel.directionReversals + 2)
+    // 两者都收敛到正确终态：E 登顶。
+    expect(framesVel.at(-1)!.find(d => d.id === 'E')!.blurRank).toBeCloseTo(0, 2)
+    expect(framesAccel.at(-1)!.find(d => d.id === 'E')!.blurRank).toBeCloseTo(0, 2)
   })
 })

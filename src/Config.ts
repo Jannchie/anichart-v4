@@ -4,8 +4,11 @@ import { colorMap, colors } from './resources'
 
 export type ValueScaleType = 'from-zero' | 'from-min' | 'from-delta' | 'adaptive'
 
-// 当前只有 velocity；未来扩展时往 union 加成员，并在 DataProcessor 的 SWAP_ALGORITHMS 注册表里注册实现。
-export type SwapAlgorithmName = 'velocity'
+// 扩展时往 union 加成员，并在 DataProcessor 的 SWAP_ALGORITHMS 注册表里注册实现。
+//   velocity        —— 纯反馈：blurRank 用「匀减速恰好停在 target」追踪离散 target rank。
+//   velocity-accel  —— velocity + 距离自适应加速度：暴涨穿多级时加速度变大、更快收敛，压缩逆序时间，
+//                      普通 1-rank 交换不受影响、惯性与 velocity 一致。swapAccelBoost=0 即退化为 velocity。
+export type SwapAlgorithmName = 'velocity' | 'velocity-accel'
 
 interface IConfig {
   canvasWidth: number
@@ -32,6 +35,9 @@ interface IConfig {
   topN: number
   swapAlgorithm: SwapAlgorithmName
   swapDurationSec: number
+  // velocity-accel 专用旋钮（对 velocity 无效）：距离自适应加速度系数 a_eff = a·(1 + boost·max(0,|dist|−1))。
+  //   0=退化为 velocity；越大暴涨柱收敛越快、逆序时间越短（也越快），普通 1-rank 交换永不受影响。
+  swapAccelBoost: number
   barGap: number
   barInfoPadding: number
   autoBarHeight: boolean
@@ -85,6 +91,7 @@ export class Config {
   topN: number
   swapAlgorithm: SwapAlgorithmName
   swapDurationSec: number
+  swapAccelBoost: number
   barGap: number
   barHeight: number
   autoBarHeight: boolean = true
@@ -148,6 +155,7 @@ export class Config {
     // velocity 算法语义：1-rank 位移大致耗时 swapDurationSec（梯形速度曲线 maxVel=2/D, maxAccel=4/D²）。
     // 多 rank 跳跃自然按 maxVel 巡航，时长 = D + (Δrank-1)/2 × D。
     this.swapDurationSec = 0.5
+    this.swapAccelBoost = 2
     this.barGap = 4
     this.barHeight = 24
     this.valueScaleType = 'from-zero'
