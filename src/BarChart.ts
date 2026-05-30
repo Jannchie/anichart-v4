@@ -73,13 +73,19 @@ export class BarChart extends Container {
     const xAxisLabelHeight = hasXAxisLabel ? this.xAxisLabel.height : 0
 
     for (const [i, d] of data.entries()) {
-      // valueScale 以「正在显示中的 bar」的展示值为准：
-      // alpha==1 的段内 bar 才用来定 min/max；入场/出场过渡期的 bar 数值正在向 baseline 趋近，
-      // 让它们参与会把值域往下拉甚至带到负区间，导致正常 bar 宽度被压扁。
+      // valueScale 的 min / max 取不同集合，避免入场/出场过渡 bar 造成 domain 阶跃或被拉低：
+      //   下界 min —— 只看 alpha>=1 的稳定 bar：过渡 bar value 正在向 baseline 趋近，
+      //     让它们定 min 会把值域往下拉甚至带到负区间，压扁正常 bar 宽度。
+      //   上界 max —— 看 alpha>0 的渐入 bar：入场新柱 value 随缓动从 baseline 平滑爬到真实值，
+      //     上界随之平滑抬升。若只认 alpha>=1，高分新柱在 alpha 渐近触及 1（easeInOutCubic 末端
+      //     极平，可停在 1−5e-7 多帧）前被「整段排除」，触顶那一帧突然纳入 → domain 上界阶跃
+      //     （坐标轴突跳）。出场 bar value 在降、不抬高 max，故纳入 emerging 集合安全。
       // 直接读 item.value（展示值），不走 config.getValue —— getValue 默认取 raw[valueField]，
       // 而新 DataProcessor 不再把 raw 字段铺到 Data 上。
-      const visible = d.filter(item => item.alpha >= 1)
-      const [min, max] = extent(visible, item => item.value)
+      const stable = d.filter(item => item.alpha >= 1)
+      const emerging = d.filter(item => item.alpha > 0)
+      const [min] = extent(stable, item => item.value)
+      const [, max] = extent(emerging, item => item.value)
       const safeMin = Number.isFinite(min) ? Number(min) : 0
       const safeMax = Number.isFinite(max) ? Number(max) : 0
       frameMinValues[i] = safeMin
@@ -414,8 +420,11 @@ export class BarChart extends Container {
     const data = this.data[idx]
     let valueScale = this.frameValueScales[idx]
     if (!valueScale) {
-      const visible = data.filter(item => item.alpha >= 1)
-      const [min, max] = extent(visible, d => d.value)
+      // 与构造期一致：下界看稳定 bar、上界看渐入 bar（见上方主路径注释）。
+      const stable = data.filter(item => item.alpha >= 1)
+      const emerging = data.filter(item => item.alpha > 0)
+      const [min] = extent(stable, d => d.value)
+      const [, max] = extent(emerging, d => d.value)
       valueScale = getValueScale(config.valueScaleType, min, max, config.valueScaleDelta, {
         referenceSpan: this.referenceSpan,
         minRatio: config.valueScaleMinRatio,
