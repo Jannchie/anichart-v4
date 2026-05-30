@@ -371,29 +371,26 @@ export class DataProcessor {
     DataProcessor.computeUpFlags(result)
   }
 
-  // velocity-controlled rank trajectory（三角速度曲线 + boundary-driven alpha）：
+  // velocity-controlled rank trajectory（"arrive" 减速曲线 + boundary-driven alpha）：
   //   target = d.rank（fillRank 给出：屏内 unique 0..topN-1，屏外统一 topN 停车位）。每根 bar 始终朝自己的
   //     真实 dataRank 移动——不做"身位让位 / 吸附 round(vrPrev)"修正：那样在身位内没有紧邻倒置对手时
   //     会把 bar 钉死在错误名次，y 位置与 value 名次脱节（这是被移除的旧 proximity 方案的核心缺陷）。
   //   desired = sign(dist) × max(minVel, √(2·maxAccel·|dist|))
-  //     —— 速度随剩余距离增大、无上限：暴涨 / 暴跌的 bar 一次跨多个名次时能全速追上，避免 blurRank 滞后于
-  //        rank（真实榜单里一个模型上线后名次可在零点几秒内跨十几位，固定速度上限会追不上而长期错位）。
-  //   velocity 以 maxAccel·dt 上限平滑变化；displacement = velocity × dt；接近 target 时吸附整数 → 收敛 + 防漂移。
-  //   alpha = min(sampleAlpha, clamp(topN - blurRank, 0, 1))
-  //     blurRank ≤ topN-1（in-topN）→ parkingMask=1；blurRank = topN（parking）→ 0；boundary 区间线性过渡。
+  //     √(2·maxAccel·|dist|) 是"以 maxAccel 匀减速恰好停在 target"的速度：距离越大越快，所以暴涨 / 暴跌的 bar
+  //     一次跨多名次也能全速追上，不会被固定速度上限拖成长期错位；minVel 兜住末段、保证 ~swapDurationSec 内及时到位
+  //     （指数趋近 / 弹簧类模型缺这一项，会拖出长尾导致名次顺序迟迟不就位，实测错位帧数翻倍）。
+  //   v 每帧最多变化 maxDv（限制 jerk），位移 = v·dt；越过 target 或贴住且低速 → 吸附整数（收敛 + 防漂移）。
+  //   alpha = min(sampleAlpha, clamp(topN - blurRank, 0, 1))：blurRank≤topN-1 → 1；=topN → 0；boundary 线性过渡。
   // 通过 SWAP_ALGORITHMS 派发，不要直接调用。
   static applyVelocity(config: Config, result: RankedData[][]) {
     const T = result.length
-    if (T === 0) {
-      return
-    }
-    if (result[0].length === 0) {
+    if (T === 0 || result[0].length === 0) {
       return
     }
 
-    const fps = config.fps
-    const dt = 1 / fps
+    const dt = 1 / config.fps
     const D = Math.max(1e-6, config.swapDurationSec)
+    // maxAccel / minVel 标定到"1-rank 交换 ≈ swapDurationSec"；二者随 D 反比缩放，改 swapDurationSec 即整体变速。
     const maxAccel = 32 / (D * D)
     const minVel = 2 / D
     const maxDv = maxAccel * dt
@@ -402,61 +399,47 @@ export class DataProcessor {
     const visualRank = new Map<string, number>()
     const velocity = new Map<string, number>()
 
-    // alpha = min(sampleAlpha, parkingMask)
-    //   sampleAlpha 由 sampleAtStep 给出，跟随 enter/exit ramp 的 0↔1 渐变；
-    //   parkingMask = clamp(topN - blurRank, 0, 1)，把 parking 槽 (visualRank≥topN) 的 bar 强制压成透明。
-    // 入参 d.alpha 已经是 sampleAlpha（fillRank 写入），原地取 min 即可。
+    // alpha = min(sampleAlpha, parkingMask)：sampleAlpha（入参 d.alpha）跟随 enter/exit ramp 的 0↔1；
+    // parkingMask = clamp(topN - blurRank, 0, 1) 把 parking 槽 (blurRank≥topN) 压成透明。
     const writeAlpha = (d: RankedData) => {
       const parkingMask = Math.max(0, Math.min(1, topN - d.blurRank))
       d.alpha = Math.min(d.alpha, parkingMask)
     }
 
-    // 第 0 帧：snap 到 clamped rank（外部直接坐落在 parking）。
-    for (const d of result[0]) {
+    // 第 0 帧、以及中途首次出现的新 id：直接 snap 到 rank，速度 0。
+    const seed = (d: RankedData) => {
       visualRank.set(d.id, d.rank)
       velocity.set(d.id, 0)
       d.blurRank = d.rank
       writeAlpha(d)
     }
+    for (const d of result[0]) {
+      seed(d)
+    }
 
     for (let t = 1; t < T; t++) {
-      const frame = result[t]
-      for (const d of frame) {
-        // 中途出现的新 id：直接落在 target，速度 0。
+      for (const d of result[t]) {
         if (!visualRank.has(d.id)) {
-          visualRank.set(d.id, d.rank)
-          velocity.set(d.id, 0)
-          d.blurRank = d.rank
-          writeAlpha(d)
+          seed(d)
           continue
         }
 
         const vrPrev = visualRank.get(d.id)!
-        let v = velocity.get(d.id)!
         const target = d.rank
         const distance = target - vrPrev
         const absDist = Math.abs(distance)
 
-        // 梯形速度曲线：√(2·maxAccel·dist) 给出减速段，clamp 到 [minVel, maxVel] 给出巡航上限与末段兜底。
-        let desired: number
-        if (absDist < 1e-9) {
-          desired = 0
-        }
-        else {
-          const brakingVel = Math.sqrt(2 * maxAccel * absDist)
-          const sign = distance >= 0 ? 1 : -1
-          desired = sign * Math.max(minVel, brakingVel)
-        }
+        const desired = absDist < 1e-9
+          ? 0
+          : Math.sign(distance) * Math.max(minVel, Math.sqrt(2 * maxAccel * absDist))
 
-        const dv = desired - v
-        v += dv >= 0 ? Math.min(dv, maxDv) : Math.max(dv, -maxDv)
-
+        let v = velocity.get(d.id)!
+        v += Math.max(-maxDv, Math.min(maxDv, desired - v))
         let vr = vrPrev + v * dt
-        if ((distance > 0 && vr > target) || (distance < 0 && vr < target)) {
-          vr = target
-          v = 0
-        }
-        if (Math.abs(target - vr) < 1e-4 && Math.abs(v) < minVel) {
+
+        // 越过 target，或已贴住且速度低于 minVel → 吸附整数停住。
+        const overshot = (distance > 0 && vr > target) || (distance < 0 && vr < target)
+        if (overshot || (Math.abs(target - vr) < 1e-4 && Math.abs(v) < minVel)) {
           vr = target
           v = 0
         }
