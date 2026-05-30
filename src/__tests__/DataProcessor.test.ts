@@ -697,8 +697,8 @@ describe('dataprocessor.applyvelocity', () => {
     }
   })
 
-  it('远距离 dataRank 反转 (>proximity)：链式传染让位，远端 bar 初期保持原位', () => {
-    const config = new Config({ topN: 5, swapDurationSec: 0.5, fps: 60, swapProximityRanks: 1.5 })
+  it('远距离 dataRank 反转：所有 bar 立即朝各自 dataRank 移动并收敛（不钉死在原位）', () => {
+    const config = new Config({ topN: 5, swapDurationSec: 0.5, fps: 60 })
     const N = 5 * 60
     const result = buildSegment(0, 1, N, (i) => {
       if (i === 0) {
@@ -708,12 +708,14 @@ describe('dataprocessor.applyvelocity', () => {
       return [['E', 0, 200], ['A', 1, 100], ['B', 2, 80], ['C', 3, 60], ['D', 4, 40]]
     })
     DataProcessor.applyVelocity(config, result)
-    // 第一帧后：只有 D 和 E 紧邻倒置（gap=1 ≤ 1.5），先开始让位；
-    // A/B/C 与 E 距离 4/3/2 > 1.5，无身位内倒置对手，保持原 rank（被 lock 吸附整数）
-    expect(result[1].find(d => d.id === 'A')!.blurRank).toBe(0)
-    expect(result[1].find(d => d.id === 'B')!.blurRank).toBe(1)
-    expect(result[1].find(d => d.id === 'C')!.blurRank).toBe(2)
-    // 最终全部收敛到 dataRank（链式传染完成）
+    // 每根 bar 始终朝自己的真实 dataRank 移动：第一帧后即离开原位（A/B/C/D 下移、E 上移），
+    // 不会因为"身位内暂无紧邻倒置对手"而被钉死在旧名次（被移除的 proximity 方案会钉死 → y 位置错乱）。
+    expect(result[1].find(d => d.id === 'A')!.blurRank).toBeGreaterThan(0)
+    expect(result[1].find(d => d.id === 'B')!.blurRank).toBeGreaterThan(1)
+    expect(result[1].find(d => d.id === 'C')!.blurRank).toBeGreaterThan(2)
+    expect(result[1].find(d => d.id === 'D')!.blurRank).toBeGreaterThan(3)
+    expect(result[1].find(d => d.id === 'E')!.blurRank).toBeLessThan(4)
+    // 最终全部收敛到各自 dataRank
     const last = result.at(-1)!
     expect(last.find(d => d.id === 'E')!.blurRank).toBeCloseTo(0, 5)
     expect(last.find(d => d.id === 'A')!.blurRank).toBeCloseTo(1, 5)

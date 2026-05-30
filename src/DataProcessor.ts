@@ -371,71 +371,16 @@ export class DataProcessor {
     DataProcessor.computeUpFlags(result)
   }
 
-  // 邻接驱动的 effective target：A 仅在身位内有"倒置对手"（vrPrev 序与 dataRank 序相反的 bar）时才朝 dataRank 让位。
-  //   "倒置对手" 定义：(vrPrev_B < vrPrev_A && dataRank_B > dataRank_A) 或 (vrPrev_B > vrPrev_A && dataRank_B < dataRank_A)
-  //   即 B 视觉在上但数据上应在下、或 视觉在下但数据上应在上。
-  // 命中身位内倒置对手 → effective = dataRank（朝最终目标推进，velocity 全速）；
-  // 未命中 → effective = round(vrPrev)（吸附到最近整数 rank，避免浮点漂移破坏网格对齐）。
-  //   若 |vrPrev - round(vrPrev)| < integerSnap → 同时清零 velocity，硬停在整数位置。
-  // 由此远处 dataRank 反转不会立即让位，让位从端头（紧邻倒置者）向远处链式传染。
-  private static computeEffectiveTargets(
-    frame: RankedData[],
-    vrPrev: Map<string, number>,
-    proximityRanks: number,
-  ): { targets: Map<string, number>, locks: Set<string> } {
-    const sorted = [...frame].sort((a, b) => vrPrev.get(a.id)! - vrPrev.get(b.id)!)
-    const targets = new Map<string, number>()
-    const locks = new Set<string>()
-    const integerSnap = 0.1
-    for (let i = 0; i < sorted.length; i++) {
-      const d = sorted[i]
-      const myVr = vrPrev.get(d.id)!
-      const dataTarget = d.rank
-      // sortedIndex == dataRank 表示视觉序与数据序一致（已就位），velocity 自然朝 dataRank 收敛整数对齐
-      if (i === dataTarget) {
-        targets.set(d.id, dataTarget)
-        continue
-      }
-      let hasNearbyOpponent = false
-      for (let j = 0; j < sorted.length; j++) {
-        if (j === i) {
-          continue
-        }
-        const nb = sorted[j]
-        const nbVr = vrPrev.get(nb.id)!
-        const inverted = (j < i && nb.rank > dataTarget) || (j > i && nb.rank < dataTarget)
-        if (!inverted) {
-          continue
-        }
-        if (Math.abs(myVr - nbVr) <= proximityRanks) {
-          hasNearbyOpponent = true
-          break
-        }
-      }
-      if (hasNearbyOpponent) {
-        targets.set(d.id, dataTarget)
-      }
-      else {
-        // 静止：吸附到最近整数 rank；接近整数时锁定速度避免惯性越过
-        const nearestInt = Math.round(myVr)
-        targets.set(d.id, nearestInt)
-        if (Math.abs(myVr - nearestInt) < integerSnap) {
-          locks.add(d.id)
-        }
-      }
-    }
-    return { targets, locks }
-  }
-
-  // velocity-controlled rank trajectory + clamped target + boundary-driven alpha：
-  //   target = effectiveTarget（受身位约束修正，见 computeEffectiveTargets）
-  //   desired = sign(dist) × max(minVel, √(2·maxAccel·|dist|))（三角速度曲线，无 maxVel cap）
-  //   velocity 以 maxAccel·dt 上限平滑变化；displacement = velocity × dt
-  //   lock 命中时直接吸附 vr=target、v=0（硬停在整数 rank 避免浮点漂移）
-  //   alpha = clamp(topN - blurRank, 0, 1)
-  //     blurRank ≤ topN-1（in-topN）→ alpha=1
-  //     blurRank = topN（parking）→ alpha=0
-  //     boundary 过渡 blurRank ∈ (topN-1, topN) → alpha 跟随线性插值，与位置 ease 同步
+  // velocity-controlled rank trajectory（三角速度曲线 + boundary-driven alpha）：
+  //   target = d.rank（fillRank 给出：屏内 unique 0..topN-1，屏外统一 topN 停车位）。每根 bar 始终朝自己的
+  //     真实 dataRank 移动——不做"身位让位 / 吸附 round(vrPrev)"修正：那样在身位内没有紧邻倒置对手时
+  //     会把 bar 钉死在错误名次，y 位置与 value 名次脱节（这是被移除的旧 proximity 方案的核心缺陷）。
+  //   desired = sign(dist) × max(minVel, √(2·maxAccel·|dist|))
+  //     —— 速度随剩余距离增大、无上限：暴涨 / 暴跌的 bar 一次跨多个名次时能全速追上，避免 blurRank 滞后于
+  //        rank（真实榜单里一个模型上线后名次可在零点几秒内跨十几位，固定速度上限会追不上而长期错位）。
+  //   velocity 以 maxAccel·dt 上限平滑变化；displacement = velocity × dt；接近 target 时吸附整数 → 收敛 + 防漂移。
+  //   alpha = min(sampleAlpha, clamp(topN - blurRank, 0, 1))
+  //     blurRank ≤ topN-1（in-topN）→ parkingMask=1；blurRank = topN（parking）→ 0；boundary 区间线性过渡。
   // 通过 SWAP_ALGORITHMS 派发，不要直接调用。
   static applyVelocity(config: Config, result: RankedData[][]) {
     const T = result.length
@@ -453,7 +398,6 @@ export class DataProcessor {
     const minVel = 2 / D
     const maxDv = maxAccel * dt
     const topN = config.topN
-    const proximityRanks = Math.max(0, config.swapProximityRanks)
 
     const visualRank = new Map<string, number>()
     const velocity = new Map<string, number>()
@@ -477,18 +421,6 @@ export class DataProcessor {
 
     for (let t = 1; t < T; t++) {
       const frame = result[t]
-
-      // 收集本帧 vrPrev，并按身位约束计算 effective target + lock 集合
-      const vrPrevMap = new Map<string, number>()
-      for (const d of frame) {
-        vrPrevMap.set(d.id, visualRank.get(d.id) ?? d.rank)
-      }
-      const { targets: effectiveTargets, locks } = DataProcessor.computeEffectiveTargets(
-        frame,
-        vrPrevMap,
-        proximityRanks,
-      )
-
       for (const d of frame) {
         // 中途出现的新 id：直接落在 target，速度 0。
         if (!visualRank.has(d.id)) {
@@ -501,21 +433,11 @@ export class DataProcessor {
 
         const vrPrev = visualRank.get(d.id)!
         let v = velocity.get(d.id)!
-        const target = effectiveTargets.get(d.id) ?? d.rank
-
-        // 锁定：吸附到 target 整数位置，velocity 清零
-        if (locks.has(d.id)) {
-          visualRank.set(d.id, target)
-          velocity.set(d.id, 0)
-          d.blurRank = target
-          writeAlpha(d)
-          continue
-        }
-
+        const target = d.rank
         const distance = target - vrPrev
         const absDist = Math.abs(distance)
 
-        // 三角速度曲线 + minVel 兜底。
+        // 梯形速度曲线：√(2·maxAccel·dist) 给出减速段，clamp 到 [minVel, maxVel] 给出巡航上限与末段兜底。
         let desired: number
         if (absDist < 1e-9) {
           desired = 0

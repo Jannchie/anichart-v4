@@ -32,7 +32,6 @@ interface IConfig {
   topN: number
   swapAlgorithm: SwapAlgorithmName
   swapDurationSec: number
-  swapProximityRanks: number // swap 触发条件：倒置对手 (vrPrev, dataRank 反序的 bar) 必须 |vrPrev 差| ≤ 此值；远处反转不会立即让位
   barGap: number
   barInfoPadding: number
   autoBarHeight: boolean
@@ -84,7 +83,6 @@ export class Config {
   topN: number
   swapAlgorithm: SwapAlgorithmName
   swapDurationSec: number
-  swapProximityRanks: number
   barGap: number
   barHeight: number
   autoBarHeight: boolean = true
@@ -146,9 +144,6 @@ export class Config {
     // velocity 算法语义：1-rank 位移大致耗时 swapDurationSec（梯形速度曲线 maxVel=2/D, maxAccel=4/D²）。
     // 多 rank 跳跃自然按 maxVel 巡航，时长 = D + (Δrank-1)/2 × D。
     this.swapDurationSec = 0.5
-    // 身位约束：只有当某个"倒置对手"（vrPrev 序与 dataRank 序相反的 bar）位于身位内，self 才朝 dataRank 让位；
-    // 远处的 dataRank 反转不会立即触发让位，让位从端头向中间链式传染。
-    this.swapProximityRanks = 1.5
     this.barGap = 4
     this.barHeight = 24
     this.valueScaleType = 'from-zero'
