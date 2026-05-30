@@ -1,7 +1,7 @@
 export { BarComponent, EXTRA_VALUE_LABEL_PADDING } from './bar'
 export { BarChart } from './BarChart'
 export { Config } from './Config'
-export type { IConfig as ConfigOptions, LineTimeAxisMode, SwapAlgorithmName, ValueScaleType } from './Config'
+export type { ConfigInput as ConfigOptions, FieldOrAccessor, LineConfig, LineTimeAxisMode, StyleConfig, SwapAlgorithmName, SwapConfig, ValueScaleConfig, ValueScaleType } from './Config'
 export type { Data, RankedData } from './Data'
 export { DataProcessor } from './DataProcessor'
 export { LineChart } from './LineChart'

@@ -67,24 +67,23 @@ const modelNameMap = new Map([
 ])
 
 const config = new Config({
-  idField: 'company',
-  stepField: 'date',
-  valueField: 'rating',
+  id: 'company',
+  step: 'date',
+  value: 'rating',
   xAxisLabel: 'LMSYS Chatbot Arena Elo Rating',
   maxRetentionTimeSec: 5,
   getStepLabel(step) {
     const date = new Date(step * 1000)
     return timeFormat('%Y-%m-%d')(date)
   },
-  swapDurationSec: 0.5,
-  valueScaleType: 'from-delta',
-  valueScaleDelta: 250,
+  swap: { durationSec: 0.5 },
+  valueScale: { type: 'from-delta', delta: 250 },
   y: 0,
   transitionDurationSec: 12,
-  labelField: '-',
+  label: '-',
   topN: 16,
   totalDurationSec: 120,
-  getColor: (d) => {
+  color: (d) => {
     if (colorMap.has(d.id)) {
       return colorMap.get(d.id)
     }

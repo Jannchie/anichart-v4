@@ -136,7 +136,7 @@ describe('dataprocessor.buildsamplers', () => {
 
 describe('dataprocessor.buildbaselinescale', () => {
   it('from-delta: baseline = topN_max − valueScaleDelta', () => {
-    const config = new Config({ topN: 2, valueScaleType: 'from-delta', valueScaleDelta: 50 })
+    const config = new Config({ topN: 2, valueScale: { type: 'from-delta', delta: 50 } })
     const data: Data[] = [
       createData('A', 0, 100),
       createData('B', 0, 80),
@@ -149,7 +149,7 @@ describe('dataprocessor.buildbaselinescale', () => {
   })
 
   it('from-zero: baseline = 0 regardless of data range', () => {
-    const config = new Config({ topN: 3, valueScaleType: 'from-zero' })
+    const config = new Config({ topN: 3, valueScale: { type: 'from-zero' } })
     const data: Data[] = [
       createData('A', 0, 100),
       createData('B', 0, 80),
@@ -160,7 +160,7 @@ describe('dataprocessor.buildbaselinescale', () => {
   })
 
   it('from-min: baseline = 2·dataMin − dataMax within topN', () => {
-    const config = new Config({ topN: 3, valueScaleType: 'from-min' })
+    const config = new Config({ topN: 3, valueScale: { type: 'from-min' } })
     const data: Data[] = [
       createData('A', 0, 100),
       createData('B', 0, 80),
@@ -173,7 +173,7 @@ describe('dataprocessor.buildbaselinescale', () => {
   })
 
   it('interpolates baseline between real steps', () => {
-    const config = new Config({ topN: 2, valueScaleType: 'from-delta', valueScaleDelta: 50 })
+    const config = new Config({ topN: 2, valueScale: { type: 'from-delta', delta: 50 } })
     const data: Data[] = [
       createData('A', 0, 100),
       createData('B', 0, 50),
@@ -187,7 +187,7 @@ describe('dataprocessor.buildbaselinescale', () => {
   })
 
   it('clamps outside the real-step range', () => {
-    const config = new Config({ topN: 2, valueScaleType: 'from-delta', valueScaleDelta: 50 })
+    const config = new Config({ topN: 2, valueScale: { type: 'from-delta', delta: 50 } })
     const data: Data[] = [
       createData('A', 0, 100),
       createData('B', 0, 50),
@@ -412,7 +412,7 @@ describe('dataprocessor.fillrank', () => {
 describe('dataprocessor.addtailingframes', () => {
   it('alpha 由 applyVelocity 按 blurRank 改写：parking (blurRank=topN) → alpha=0', () => {
     // 新设计：alpha 由 topN-blurRank clamp 决定，不再由 sampler 持有。
-    const config = new Config({ topN: 2, swapDurationSec: 1, fps: 2 })
+    const config = new Config({ topN: 2, swap: { durationSec: 1 }, fps: 2 })
     const createRanked = (step: number): RankedData => ({
       id: 'alpha',
       label: 'alpha',
@@ -475,7 +475,7 @@ describe('dataprocessor.applyvelocity', () => {
   }
 
   it('stationary: no rank change → blurRank ≡ rank', () => {
-    const config = new Config({ topN: 5, swapDurationSec: 0.5, fps: 60 })
+    const config = new Config({ topN: 5, swap: { durationSec: 0.5 }, fps: 60 })
     const result = buildSegment(0, 1, 30, () => [['A', 0, 100], ['B', 1, 80], ['C', 2, 60]])
     DataProcessor.applyVelocity(config, result)
     for (const frame of result) {
@@ -486,7 +486,7 @@ describe('dataprocessor.applyvelocity', () => {
   })
 
   it('1-rank swap: 对称守恒 A.blur + B.blur ≡ 1', () => {
-    const config = new Config({ topN: 5, swapDurationSec: 0.5, fps: 60 })
+    const config = new Config({ topN: 5, swap: { durationSec: 0.5 }, fps: 60 })
     const N = 120
     const result = buildSegment(0, 1, N, (i) => {
       if (i === 0) {
@@ -503,7 +503,7 @@ describe('dataprocessor.applyvelocity', () => {
   })
 
   it('1-rank swap: 在 swapDurationSec 内完成位移', () => {
-    const config = new Config({ topN: 5, swapDurationSec: 0.5, fps: 60 })
+    const config = new Config({ topN: 5, swap: { durationSec: 0.5 }, fps: 60 })
     // 30 帧 = swapDurationSec at fps=60。velocity 模型 1-rank 位移恰好耗时 D。
     const N = 120
     const result = buildSegment(0, 1, N, (i) => {
@@ -519,7 +519,7 @@ describe('dataprocessor.applyvelocity', () => {
   })
 
   it('1-rank swap: 单调向 target 前进（无超调）', () => {
-    const config = new Config({ topN: 5, swapDurationSec: 0.5, fps: 60 })
+    const config = new Config({ topN: 5, swap: { durationSec: 0.5 }, fps: 60 })
     const N = 90
     const result = buildSegment(0, 1, N, (i) => {
       if (i === 0) {
@@ -538,7 +538,7 @@ describe('dataprocessor.applyvelocity', () => {
   })
 
   it('velocity smooth: 帧间速度变化 ≤ maxAccel × dt（除 touchdown 吸附帧）', () => {
-    const config = new Config({ topN: 5, swapDurationSec: 0.5, fps: 60 })
+    const config = new Config({ topN: 5, swap: { durationSec: 0.5 }, fps: 60 })
     const D = config.swapDurationSec
     const fps = config.fps
     const dt = 1 / fps
@@ -568,7 +568,7 @@ describe('dataprocessor.applyvelocity', () => {
   })
 
   it('multi-rank jump: B 从 rank=3 直接降到 rank=0，单调收敛', () => {
-    const config = new Config({ topN: 5, swapDurationSec: 0.5, fps: 60 })
+    const config = new Config({ topN: 5, swap: { durationSec: 0.5 }, fps: 60 })
     const N = 5 * 60
     const result = buildSegment(0, 1, N, (i) => {
       if (i === 0) {
@@ -590,7 +590,7 @@ describe('dataprocessor.applyvelocity', () => {
   it('multi-rank jump: 速度受三角峰值 √(2·a·N/2) 限制，不会无限加速', () => {
     // 新模型无 maxVel cap；峰值由 brakingVel 决定 = √(2·a·d_remaining)，
     // 最大可能峰值 = √(a·N) (在 d=N/2 处达到)。
-    const config = new Config({ topN: 5, swapDurationSec: 0.5, fps: 60 })
+    const config = new Config({ topN: 5, swap: { durationSec: 0.5 }, fps: 60 })
     const D = config.swapDurationSec
     const fps = config.fps
     const dt = 1 / fps
@@ -614,7 +614,7 @@ describe('dataprocessor.applyvelocity', () => {
   })
 
   it('value reversal: target 反转 → 速度平滑反向，最终收敛到新 target', () => {
-    const config = new Config({ topN: 5, swapDurationSec: 0.5, fps: 60 })
+    const config = new Config({ topN: 5, swap: { durationSec: 0.5 }, fps: 60 })
     const D = config.swapDurationSec
     const fps = config.fps
     const dt = 1 / fps
@@ -651,7 +651,7 @@ describe('dataprocessor.applyvelocity', () => {
   })
 
   it('blurRank 全程不越界 [0, N-1]', () => {
-    const config = new Config({ topN: 5, swapDurationSec: 0.5, fps: 60 })
+    const config = new Config({ topN: 5, swap: { durationSec: 0.5 }, fps: 60 })
     const N = 6 * 60
     const result = buildSegment(0, 1, N, (i) => {
       if (i === 0) {
@@ -675,7 +675,7 @@ describe('dataprocessor.applyvelocity', () => {
   })
 
   it('N > topN: topN 外 bar 升入 topN（rank unclamped, target 全局 unique）', () => {
-    const config = new Config({ topN: 3, swapDurationSec: 0.5, fps: 60 })
+    const config = new Config({ topN: 3, swap: { durationSec: 0.5 }, fps: 60 })
     const N = 5 * 60
     const result = buildSegment(0, 1, N, (i) => {
       if (i === 0) {
@@ -699,7 +699,7 @@ describe('dataprocessor.applyvelocity', () => {
   })
 
   it('远距离 dataRank 反转：所有 bar 立即朝各自 dataRank 移动并收敛（不钉死在原位）', () => {
-    const config = new Config({ topN: 5, swapDurationSec: 0.5, fps: 60 })
+    const config = new Config({ topN: 5, swap: { durationSec: 0.5 }, fps: 60 })
     const N = 5 * 60
     const result = buildSegment(0, 1, N, (i) => {
       if (i === 0) {
@@ -728,7 +728,7 @@ describe('dataprocessor.applyvelocity', () => {
   it('3-bar reshuffle: 中间 bar 不会停滞重叠', () => {
     // A=0,B=1,C=2 → C=0,B=1,A=2。B 的 target 不变（rank=1）但视觉上是「让位」过程。
     // velocity 模型：B 的 target 始终为 1，速度为 0，blurRank 一直 = 1，独立于 A/C 交换。
-    const config = new Config({ topN: 5, swapDurationSec: 0.5, fps: 60 })
+    const config = new Config({ topN: 5, swap: { durationSec: 0.5 }, fps: 60 })
     const N = 5 * 60
     const result = buildSegment(0, 1, N, (i) => {
       if (i === 0) {
@@ -755,7 +755,7 @@ describe('dataprocessor.swapalgorithm.dispatch', () => {
   })
 
   it('addTailingFrames dispatches to velocity and writes blurRank', () => {
-    const config = new Config({ topN: 2, swapDurationSec: 0.5, fps: 60 })
+    const config = new Config({ topN: 2, swap: { durationSec: 0.5 }, fps: 60 })
     const makeOne = (id: string, rank: number, value: number): RankedData => ({
       id,
       label: id,
@@ -783,10 +783,10 @@ describe('dataprocessor.swapalgorithm.dispatch', () => {
 describe('dataprocessor.preprocess', () => {
   it('retains label-like fields as strings even when numeric-looking', () => {
     const config = new Config({
-      idField: 'id',
-      labelField: 'name',
-      valueField: 'metric',
-      stepField: 'step',
+      id: 'id',
+      label: 'name',
+      value: 'metric',
+      step: 'step',
     })
     const rawData = [
       { id: '1', name: '01', metric: '10', step: '0' },
@@ -834,8 +834,8 @@ describe('dataprocessor.applyvelocityaccel', () => {
     const valueAt = (id: string, t: number): number =>
       id === 'E' ? 10 + Math.min(1, t / 30) * 190 : ({ A: 100, B: 80, C: 60, D: 40 } as Record<string, number>)[id]
     const ids = ['A', 'B', 'C', 'D', 'E']
-    const cfgV = new Config({ topN: 5, swapDurationSec: 0.5, fps: 60 })
-    const cfgA = new Config({ topN: 5, swapDurationSec: 0.5, fps: 60, swapAccelBoost: 0 })
+    const cfgV = new Config({ topN: 5, swap: { durationSec: 0.5 }, fps: 60 })
+    const cfgA = new Config({ topN: 5, swap: { durationSec: 0.5, accelBoost: 0 }, fps: 60 })
     const fv = framesFromValueFn(ids, 200, valueAt, 5)
     const fa = framesFromValueFn(ids, 200, valueAt, 5)
     DataProcessor.applyVelocity(cfgV, fv)
@@ -848,7 +848,7 @@ describe('dataprocessor.applyvelocityaccel', () => {
   })
 
   it('steady state: value 不变 → 收敛到整数 rank 且全程不动', () => {
-    const config = new Config({ topN: 5, swapDurationSec: 0.5, fps: 60, swapAccelBoost: 2 })
+    const config = new Config({ topN: 5, swap: { durationSec: 0.5, accelBoost: 2 }, fps: 60 })
     const stable: Record<string, number> = { A: 100, B: 80, C: 60 }
     const frames = framesFromValueFn(['A', 'B', 'C'], 120, id => stable[id], 5)
     DataProcessor.applyVelocityAccel(config, frames)
@@ -871,7 +871,7 @@ describe('dataprocessor.applyvelocityaccel', () => {
       return stable[id]
     }
     const ids = ['A', 'B', 'C', 'D', 'E']
-    const config = new Config({ topN, swapDurationSec: 0.5, fps: 60, swapAccelBoost: 2 })
+    const config = new Config({ topN, swap: { durationSec: 0.5, accelBoost: 2 }, fps: 60 })
     const framesVel = framesFromValueFn(ids, T, valueAt, topN)
     const framesAccel = framesFromValueFn(ids, T, valueAt, topN)
     DataProcessor.applyVelocity(config, framesVel)

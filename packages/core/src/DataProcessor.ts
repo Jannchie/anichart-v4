@@ -407,7 +407,8 @@ export class DataProcessor {
 
     const dt = 1 / config.fps
     const D = Math.max(1e-6, config.swapDurationSec)
-    // maxAccel / minVel 标定到"1-rank 交换 ≈ swapDurationSec"；二者随 D 反比缩放，改 swapDurationSec 即整体变速。
+    // maxAccel=32/D²、minVel=2/D 均随 1/D 缩放：改 swapDurationSec 即整体变速（越大越慢）。三角速度曲线无巡航封顶，
+    // 1-rank 实际耗时 ≈ 0.35·D（非 D 本身）；D 是相对节奏标度而非绝对秒数。
     const maxAccel = 32 / (D * D)
     const minVel = 2 / D
     const maxDv = maxAccel * dt
