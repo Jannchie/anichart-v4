@@ -2,11 +2,11 @@
 
 ## Project Structure & Module Organization
 
-The project is organized as a Vite-powered TypeScript workspace. Core source files live in `src/`, which contains rendering logic, chart composition, and shared utilities. Static assets and the base HTML shell reside in `public/` and `index.html`. Temporary experiments belong in `playground/`, keeping prototype code separate from production modules. Shared configuration files such as `tsconfig.json`, `pnpm-workspace.yaml`, and `eslint.config.js` sit at the root so new packages inherit consistent settings.
+The repo is a pnpm + Turborepo monorepo. The library lives in `packages/core` (`@anichart/core`), the PIXI.js chart engine (rendering, composition, shared utilities under `src/`). Applications live under `apps/`: `playground` (interactive Vite demo of the library), `docs` (VitePress), `studio` (Remotion video-render project; seed of the future video-export feature), and `web` (Nuxt SaaS — upload data, configure charts, play & share works). Shared config sits at the root: `tsconfig.base.json` (each package extends it), `pnpm-workspace.yaml`, `turbo.json`, `eslint.config.js`. Apps consume `@anichart/core`'s built `dist` (not its source), so build the library before running app dev/build/typecheck — Turborepo orders this via `^build`.
 
 ## Build, Test, and Development Commands
 
-Install dependencies with `pnpm install`. Use `pnpm dev` for the hot-reloading development server, `pnpm build` to run `tsc` type checks followed by a production bundle, and `pnpm preview` to review the optimized build locally. Keep builds clean before pushing by ensuring `pnpm build` completes without warnings.
+Install with `pnpm install`. Root commands run through Turborepo: `pnpm build` (build all packages in dependency order), `pnpm test`, `pnpm typecheck`, `pnpm lint`, `pnpm dev` (parallel dev; core builds in watch mode for consumers). Target one package with a filter, e.g. `pnpm --filter playground dev`, `pnpm --filter docs dev`, `pnpm --filter web dev`, `pnpm --filter studio start`, `pnpm --filter @anichart/core build`. Keep builds clean before pushing.
 
 ## Coding Style & Naming Conventions
 

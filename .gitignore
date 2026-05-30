@@ -12,6 +12,13 @@ dist
 dist-ssr
 *.local
 
+# Monorepo / 构建产物
+.turbo
+.nuxt
+.output
+.data
+apps/studio/out
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
@@ -22,4 +29,5 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-docs/.vitepress/cache
+**/.vitepress/cache
+**/.vitepress/dist

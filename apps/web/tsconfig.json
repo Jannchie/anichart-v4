@@ -1,0 +1,10 @@
+{
+  // Nuxt 在 .nuxt/ 下生成各环境的 tsconfig，这里仅做引用
+  "files": [],
+  "references": [
+    { "path": "./.nuxt/tsconfig.app.json" },
+    { "path": "./.nuxt/tsconfig.server.json" },
+    { "path": "./.nuxt/tsconfig.shared.json" },
+    { "path": "./.nuxt/tsconfig.node.json" }
+  ]
+}

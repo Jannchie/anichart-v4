@@ -1,0 +1,208 @@
+import type { Data } from './Data'
+import dayjs from 'dayjs'
+import { colorMap, colors } from './resources'
+
+export type ValueScaleType = 'from-zero' | 'from-min' | 'from-delta' | 'adaptive'
+
+// 扩展时往 union 加成员，并在 DataProcessor 的 SWAP_ALGORITHMS 注册表里注册实现。
+//   velocity        —— 纯反馈：blurRank 用「匀减速恰好停在 target」追踪离散 target rank。
+//   velocity-accel  —— velocity + 距离自适应加速度：暴涨穿多级时加速度变大、更快收敛，压缩逆序时间，
+//                      普通 1-rank 交换不受影响、惯性与 velocity 一致。swapAccelBoost=0 即退化为 velocity。
+export type SwapAlgorithmName = 'velocity' | 'velocity-accel'
+
+// 折线图时间轴（X 轴）模式：
+//   dynamic —— 跟随「当前活跃线」的时间跨度，右端=当前时刻，线始终填满宽度（赛跑式，默认）。
+//   fixed   —— 固定为完整 [起始, 结束]，线从左往右画入，能看绝对位置但常有留白。
+//   window  —— 只显示最近一段固定时长（lineTimeWindowRatio）的滚动时间窗，旧历史向左滚出。
+export type LineTimeAxisMode = 'dynamic' | 'fixed' | 'window'
+
+export interface IConfig {
+  canvasWidth: number
+  canvasHeight: number
+  backgroundColor: number
+  fontFamily: string
+  idField: string
+  getID: (d: any, i: number) => any
+  labelField: string
+  getLabel: (d: any, i: number) => any
+  stepField: string
+  getStep: (d: any, i: number) => number
+  valueField: string
+  getValue: (d: any, i: number) => number
+  colorField: string
+  getColor: (d: any, i: number) => number | undefined
+  getValueExtra: (d: Data) => string
+  getValueLabel: (d: any, i: number) => any
+  getBarInfo: (d: any, i: number, step: number) => any
+  maxRetentionTimeSec: number // 最大暂留时间
+  transitionDurationSec: number
+  totalDurationSec: number
+  fps: number
+  topN: number
+  swapAlgorithm: SwapAlgorithmName
+  swapDurationSec: number
+  // velocity-accel 专用旋钮（对 velocity 无效）：距离自适应加速度系数 a_eff = a·(1 + boost·max(0,|dist|−1))。
+  //   0=退化为 velocity；越大暴涨柱收敛越快、逆序时间越短（也越快），普通 1-rank 交换永不受影响。
+  swapAccelBoost: number
+  lineTimeAxisMode: LineTimeAxisMode
+  lineTimeWindowRatio: number // window 模式：时间窗占完整时间跨度的比例
+  barGap: number
+  barInfoPadding: number
+  autoBarHeight: boolean
+  barHeight: number
+  valueScaleType: ValueScaleType
+  valueScaleDelta: number
+  valueScaleMinRatio: number // adaptive：首尾差距极大时，最后一条相对第一条的最短长度比例（软饱和下界）
+  valueScaleMaxRatio: number // adaptive：首尾差距极小时，最后一条相对第一条的最长长度比例（软饱和上界）
+  valueScaleSmoothing: number
+  leftLabelPadding: number
+  valueLabelPadding: number
+  x: number
+  y: number
+  width: number
+  height: number
+  showStepLabel: boolean
+  showLabel: boolean
+  getStepLabel: (step: number) => string
+  borderRadius: number
+  tickNum: number
+  tickLabelFontSize: number
+  imageField: string
+  barInfoStyle: 'default' | 'reverse'
+  xAxisLabel: string
+  title: string
+}
+
+export class Config {
+  imageField: string
+  canvasWidth: number = 1920
+  canvasHeight: number = 1080
+  backgroundColor: number = 0x11_11_11
+  barInfoStyle: 'default' | 'reverse'
+  fontFamily: string
+  idField: string = 'id'
+  getID: (d: any, i?: number) => any
+  labelField: string = 'id'
+  getLabel: (d: any, i?: number) => any
+  stepField: string = 'step'
+  getStep: (d: any, i?: number) => number
+  valueField: string = 'value'
+  getValue: (d: any, i?: number) => number
+  colorField: string = 'id'
+  getColor: (d: any, i?: number) => number | undefined
+  getValueLabel: (d: any, i?: number) => any
+  getBarInfo: (d: any, i?: number, step?: number) => any
+  maxRetentionTimeSec: number
+  transitionDurationSec: number
+  totalDurationSec: number
+  fps: number
+  topN: number
+  swapAlgorithm: SwapAlgorithmName
+  swapDurationSec: number
+  swapAccelBoost: number
+  lineTimeAxisMode: LineTimeAxisMode
+  lineTimeWindowRatio: number
+  barGap: number
+  barHeight: number
+  autoBarHeight: boolean = true
+  valueScaleType: ValueScaleType
+  valueScaleMinRatio: number
+  valueScaleMaxRatio: number
+  valueScaleSmoothing: number
+  leftLabelPadding: number
+  valueLabelPadding: number
+  x: number
+  y: number
+  width!: number
+  height!: number
+  showStepLabel: boolean
+  showLabel: boolean
+  getStepLabel: (step: number) => string
+  borderRadius: number
+  tickNum: number
+  tickLabelFontSize: number
+  valueScaleDelta: number
+  getValueExtra: (_: Data) => string
+  xAxisLabel: string
+  title: string
+  barInfoPadding: number
+  constructor(config: Partial<IConfig> = {}) {
+    this.getID = (d: any) => d[this.idField]
+    this.getLabel = (d: any) => d[this.labelField]
+    this.getStep = (d: any) => {
+      if (!Number.isNaN(Number(d[this.stepField]))) {
+        return Number(d[this.stepField])
+      }
+      if (new Date(d[this.stepField]).toString() !== 'Invalid Date') {
+        return dayjs(d[this.stepField]).valueOf()
+      }
+      throw new Error(`step is not a valid date or number: get ${d[this.stepField]}`)
+    }
+    this.getValue = (d: any) => Number(d[this.valueField])
+    this.colorField = 'id'
+    this.getColor = (d: any) => {
+      if (colorMap.has(d.raw[this.colorField])) {
+        return colorMap.get(d.raw[this.colorField])
+      }
+      const color = colors(d.raw[this.colorField])
+      if (color) {
+        return Number.parseInt(color.slice(1), 16)
+      }
+      return 1_677_721
+    }
+    this.getValueLabel = (d: Data) => {
+      return d.value.toFixed(0)
+    }
+    this.getValueExtra = (_: Data) => ''
+    this.getBarInfo = (d: any) => d.id
+    this.maxRetentionTimeSec = 50
+    this.transitionDurationSec = 2
+    this.totalDurationSec = 10
+    this.barInfoPadding = 10
+    this.fps = 60
+    this.topN = 20
+    this.swapAlgorithm = 'velocity'
+    // velocity 算法语义：1-rank 位移大致耗时 swapDurationSec（梯形速度曲线 maxVel=2/D, maxAccel=4/D²）。
+    // 多 rank 跳跃自然按 maxVel 巡航，时长 = D + (Δrank-1)/2 × D。
+    this.swapDurationSec = 0.5
+    this.swapAccelBoost = 2
+    this.lineTimeAxisMode = 'dynamic'
+    this.lineTimeWindowRatio = 0.35
+    this.barGap = 4
+    this.barHeight = 24
+    this.valueScaleType = 'from-zero'
+    this.valueScaleDelta = 300
+    this.valueScaleMinRatio = 0.15
+    this.valueScaleMaxRatio = 0.55
+    this.valueScaleSmoothing = 0
+    this.leftLabelPadding = 5
+    this.valueLabelPadding = 5
+    this.x = 10
+    this.y = 10
+    this.showStepLabel = true
+    this.showLabel = true
+    this.imageField = 'id'
+    this.barInfoStyle = 'default'
+    this.getStepLabel = (step: number) => dayjs(step).format('YYYY-MM-DD')
+    this.borderRadius = 0
+    this.fontFamily = 'Berkeley Mono'
+    this.tickNum = 8
+    this.tickLabelFontSize = 24
+    this.xAxisLabel = ''
+    this.title = ''
+    const widthProvided = Object.prototype.hasOwnProperty.call(config, 'width')
+    const heightProvided = Object.prototype.hasOwnProperty.call(config, 'height')
+    const valueScaleSmoothingProvided = Object.prototype.hasOwnProperty.call(config, 'valueScaleSmoothing')
+    Object.assign(this, config)
+    if (!valueScaleSmoothingProvided) {
+      const smoothingWindow = Math.max(1, Math.round(this.swapDurationSec * this.fps / 2))
+      this.valueScaleSmoothing = smoothingWindow
+    }
+    if (!widthProvided) {
+      this.width = this.canvasWidth - 20
+    }
+    if (!heightProvided) {
+      this.height = this.canvasHeight - 20
+    }
+  }
+}

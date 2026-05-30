@@ -1,0 +1,30 @@
+{
+  "name": "studio",
+  "type": "module",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Remotion 视频渲染工程（包裹 @anichart/core 逐帧渲成 mp4）—— 未来视频导出功能的种子",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "remotion studio",
+    "render": "remotion render AniComp out/anichart.mp4",
+    "upgrade": "remotion upgrade",
+    "lint": "eslint src",
+    "typecheck": "tsc"
+  },
+  "dependencies": {
+    "@anichart/core": "workspace:*",
+    "@remotion/cli": "4.0.334",
+    "d3": "^7.9.0",
+    "dayjs": "^1.11.18",
+    "pixi.js": "^8.14.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "remotion": "4.0.334"
+  },
+  "devDependencies": {
+    "@types/d3": "^7.4.3",
+    "@types/react": "^19.1.10",
+    "typescript": "^5.9.3"
+  }
+}

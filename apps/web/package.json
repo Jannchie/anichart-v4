@@ -1,0 +1,30 @@
+{
+  "name": "web",
+  "type": "module",
+  "version": "0.0.0",
+  "private": true,
+  "description": "AniChart SaaS —— 上传数据、配置图表、在线播放与分享数据可视化作品",
+  "scripts": {
+    "dev": "nuxt dev",
+    "build": "nuxt build",
+    "preview": "nuxt preview",
+    "typecheck": "nuxt typecheck",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:studio": "drizzle-kit studio"
+  },
+  "dependencies": {
+    "@anichart/core": "workspace:*",
+    "@aws-sdk/client-s3": "^3.1057.0",
+    "@aws-sdk/s3-request-presigner": "^3.1057.0",
+    "better-auth": "^1.6.12",
+    "drizzle-orm": "^0.45.2",
+    "pixi.js": "^8.14.0",
+    "postgres": "^3.4.9"
+  },
+  "devDependencies": {
+    "drizzle-kit": "^0.31.10",
+    "nuxt": "^4.0.0",
+    "vue": "^3.5.0"
+  }
+}

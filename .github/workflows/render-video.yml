@@ -1,0 +1,27 @@
+on: workflow_dispatch
+
+name: Render video
+
+jobs:
+  render:
+    name: Render video
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: pnpm install --frozen-lockfile
+      - run: echo "$WORKFLOW_INPUT" > apps/studio/input-props.json
+        env:
+          WORKFLOW_INPUT: ${{ toJson(github.event.inputs) }}
+      - run: pnpm --filter studio render -- --props="./input-props.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: anichart.mp4
+          path: apps/studio/out/anichart.mp4
