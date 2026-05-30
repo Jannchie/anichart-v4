@@ -697,6 +697,31 @@ describe('dataprocessor.applyvelocity', () => {
     }
   })
 
+  it('远距离 dataRank 反转 (>proximity)：链式传染让位，远端 bar 初期保持原位', () => {
+    const config = new Config({ topN: 5, swapDurationSec: 0.5, fps: 60, swapProximityRanks: 1.5 })
+    const N = 5 * 60
+    const result = buildSegment(0, 1, N, (i) => {
+      if (i === 0) {
+        return [['A', 0, 100], ['B', 1, 80], ['C', 2, 60], ['D', 3, 40], ['E', 4, 20]]
+      }
+      // E 飙到 rank=0：A→1, B→2, C→3, D→4, E→0
+      return [['E', 0, 200], ['A', 1, 100], ['B', 2, 80], ['C', 3, 60], ['D', 4, 40]]
+    })
+    DataProcessor.applyVelocity(config, result)
+    // 第一帧后：只有 D 和 E 紧邻倒置（gap=1 ≤ 1.5），先开始让位；
+    // A/B/C 与 E 距离 4/3/2 > 1.5，无身位内倒置对手，保持原 rank（被 lock 吸附整数）
+    expect(result[1].find(d => d.id === 'A')!.blurRank).toBe(0)
+    expect(result[1].find(d => d.id === 'B')!.blurRank).toBe(1)
+    expect(result[1].find(d => d.id === 'C')!.blurRank).toBe(2)
+    // 最终全部收敛到 dataRank（链式传染完成）
+    const last = result.at(-1)!
+    expect(last.find(d => d.id === 'E')!.blurRank).toBeCloseTo(0, 5)
+    expect(last.find(d => d.id === 'A')!.blurRank).toBeCloseTo(1, 5)
+    expect(last.find(d => d.id === 'B')!.blurRank).toBeCloseTo(2, 5)
+    expect(last.find(d => d.id === 'C')!.blurRank).toBeCloseTo(3, 5)
+    expect(last.find(d => d.id === 'D')!.blurRank).toBeCloseTo(4, 5)
+  })
+
   it('3-bar reshuffle: 中间 bar 不会停滞重叠', () => {
     // A=0,B=1,C=2 → C=0,B=1,A=2。B 的 target 不变（rank=1）但视觉上是「让位」过程。
     // velocity 模型：B 的 target 始终为 1，速度为 0，blurRank 一直 = 1，独立于 A/C 交换。

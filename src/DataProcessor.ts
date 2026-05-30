@@ -371,10 +371,67 @@ export class DataProcessor {
     DataProcessor.computeUpFlags(result)
   }
 
+  // 邻接驱动的 effective target：A 仅在身位内有"倒置对手"（vrPrev 序与 dataRank 序相反的 bar）时才朝 dataRank 让位。
+  //   "倒置对手" 定义：(vrPrev_B < vrPrev_A && dataRank_B > dataRank_A) 或 (vrPrev_B > vrPrev_A && dataRank_B < dataRank_A)
+  //   即 B 视觉在上但数据上应在下、或 视觉在下但数据上应在上。
+  // 命中身位内倒置对手 → effective = dataRank（朝最终目标推进，velocity 全速）；
+  // 未命中 → effective = round(vrPrev)（吸附到最近整数 rank，避免浮点漂移破坏网格对齐）。
+  //   若 |vrPrev - round(vrPrev)| < integerSnap → 同时清零 velocity，硬停在整数位置。
+  // 由此远处 dataRank 反转不会立即让位，让位从端头（紧邻倒置者）向远处链式传染。
+  private static computeEffectiveTargets(
+    frame: RankedData[],
+    vrPrev: Map<string, number>,
+    proximityRanks: number,
+  ): { targets: Map<string, number>, locks: Set<string> } {
+    const sorted = [...frame].sort((a, b) => vrPrev.get(a.id)! - vrPrev.get(b.id)!)
+    const targets = new Map<string, number>()
+    const locks = new Set<string>()
+    const integerSnap = 0.1
+    for (let i = 0; i < sorted.length; i++) {
+      const d = sorted[i]
+      const myVr = vrPrev.get(d.id)!
+      const dataTarget = d.rank
+      // sortedIndex == dataRank 表示视觉序与数据序一致（已就位），velocity 自然朝 dataRank 收敛整数对齐
+      if (i === dataTarget) {
+        targets.set(d.id, dataTarget)
+        continue
+      }
+      let hasNearbyOpponent = false
+      for (let j = 0; j < sorted.length; j++) {
+        if (j === i) {
+          continue
+        }
+        const nb = sorted[j]
+        const nbVr = vrPrev.get(nb.id)!
+        const inverted = (j < i && nb.rank > dataTarget) || (j > i && nb.rank < dataTarget)
+        if (!inverted) {
+          continue
+        }
+        if (Math.abs(myVr - nbVr) <= proximityRanks) {
+          hasNearbyOpponent = true
+          break
+        }
+      }
+      if (hasNearbyOpponent) {
+        targets.set(d.id, dataTarget)
+      }
+      else {
+        // 静止：吸附到最近整数 rank；接近整数时锁定速度避免惯性越过
+        const nearestInt = Math.round(myVr)
+        targets.set(d.id, nearestInt)
+        if (Math.abs(myVr - nearestInt) < integerSnap) {
+          locks.add(d.id)
+        }
+      }
+    }
+    return { targets, locks }
+  }
+
   // velocity-controlled rank trajectory + clamped target + boundary-driven alpha：
-  //   target = d.rank（来自 fillRank，clamped 到 topN：内部 unique 0..topN-1，外部统一 topN 停车位）
+  //   target = effectiveTarget（受身位约束修正，见 computeEffectiveTargets）
   //   desired = sign(dist) × max(minVel, √(2·maxAccel·|dist|))（三角速度曲线，无 maxVel cap）
   //   velocity 以 maxAccel·dt 上限平滑变化；displacement = velocity × dt
+  //   lock 命中时直接吸附 vr=target、v=0（硬停在整数 rank 避免浮点漂移）
   //   alpha = clamp(topN - blurRank, 0, 1)
   //     blurRank ≤ topN-1（in-topN）→ alpha=1
   //     blurRank = topN（parking）→ alpha=0
@@ -396,6 +453,7 @@ export class DataProcessor {
     const minVel = 2 / D
     const maxDv = maxAccel * dt
     const topN = config.topN
+    const proximityRanks = Math.max(0, config.swapProximityRanks)
 
     const visualRank = new Map<string, number>()
     const velocity = new Map<string, number>()
@@ -419,6 +477,18 @@ export class DataProcessor {
 
     for (let t = 1; t < T; t++) {
       const frame = result[t]
+
+      // 收集本帧 vrPrev，并按身位约束计算 effective target + lock 集合
+      const vrPrevMap = new Map<string, number>()
+      for (const d of frame) {
+        vrPrevMap.set(d.id, visualRank.get(d.id) ?? d.rank)
+      }
+      const { targets: effectiveTargets, locks } = DataProcessor.computeEffectiveTargets(
+        frame,
+        vrPrevMap,
+        proximityRanks,
+      )
+
       for (const d of frame) {
         // 中途出现的新 id：直接落在 target，速度 0。
         if (!visualRank.has(d.id)) {
@@ -431,7 +501,17 @@ export class DataProcessor {
 
         const vrPrev = visualRank.get(d.id)!
         let v = velocity.get(d.id)!
-        const target = d.rank
+        const target = effectiveTargets.get(d.id) ?? d.rank
+
+        // 锁定：吸附到 target 整数位置，velocity 清零
+        if (locks.has(d.id)) {
+          visualRank.set(d.id, target)
+          velocity.set(d.id, 0)
+          d.blurRank = target
+          writeAlpha(d)
+          continue
+        }
+
         const distance = target - vrPrev
         const absDist = Math.abs(distance)
 
