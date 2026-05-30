@@ -2,7 +2,8 @@
 import type { DSVRowArray } from 'd3'
 import type { Config, SwapAlgorithmName } from './Config'
 import type { Data, RankedData } from './Data'
-import { csv, extent, group, InternSet, range, scaleLinear } from 'd3'
+import { csv, extent, group, InternSet, median, range, scaleLinear } from 'd3'
+import { adaptiveDomainMin } from './utils/scale'
 
 type SwapAlgorithm = (config: Config, result: RankedData[][]) => void
 
@@ -26,8 +27,9 @@ interface SampleResult {
 
 type BaselineFn = (step: number) => number
 
-const easeInOutCubic = (x: number): number =>
-  x < 0.5 ? 4 * x * x * x : 1 - ((-2 * x + 2) ** 3) / 2
+function easeInOutCubic(x: number): number {
+  return x < 0.5 ? 4 * x * x * x : 1 - ((-2 * x + 2) ** 3) / 2
+}
 
 const lerp = (a: number, b: number, t: number): number => a + (b - a) * t
 
@@ -124,7 +126,7 @@ export class DataProcessor {
       // rank: 在 topN 内严格按 value-sort（0..topN-1, unique）；超出 topN 的 bar 统一停在 rank=topN
       // （画面外一格的停车位）。alpha 由 applyVelocity 按 in-topN 状态推导。
       return list.map((d, i) => {
-        d.rank = i < config.topN ? i : config.topN
+        d.rank = Math.min(i, config.topN)
         d.blurRank = d.rank
         return d
       })
@@ -176,6 +178,7 @@ export class DataProcessor {
   //   from-zero  → 0
   //   from-min   → 2·dataMin − dataMax（topN 范围内）
   //   from-delta → dataMax − valueScaleDelta
+  //   adaptive   → adaptiveDomainMin：最后一条相对长度随首尾差距软饱和（半衰尺度=span 中位数）
   // 跟 BarChart 的 getValueScale 计算同步，保证新 bar 从「轴底」浮起，旧 bar 沉到「轴底」消失。
   private static buildBaselineScale(data: Data[], config: Config): BaselineFn {
     const real = data.filter(d => d.alpha > 0 && Number.isFinite(d.value))
@@ -183,26 +186,40 @@ export class DataProcessor {
       return () => 0
     }
     const stepGroups = group(real, d => d.step)
-    const steps: number[] = []
-    const baselines: number[] = []
     const sortedKeys = [...stepGroups.keys()].sort((a, b) => a - b)
-    for (const step of sortedKeys) {
+    const rows = sortedKeys.map((step) => {
       const arr = [...stepGroups.get(step)!].sort((a, b) => b.value - a.value)
       const topNArr = arr.slice(0, config.topN)
       const dataMax = topNArr[0]?.value ?? 0
       const dataMin = topNArr.at(-1)?.value ?? dataMax
+      return { step, dataMax, dataMin }
+    })
+    // adaptive 参考尺度：屏内首尾差距的中位数（与 BarChart.getValueScale 同步，保证入场/出场基线一致）。
+    const referenceSpan = config.valueScaleType === 'adaptive'
+      ? (median(rows.map(r => r.dataMax - r.dataMin).filter(s => s > 0)) ?? 1)
+      : 0
+    const steps: number[] = []
+    const baselines: number[] = []
+    for (const { step, dataMax, dataMin } of rows) {
       let axisMin: number
       switch (config.valueScaleType) {
-        case 'from-zero':
+        case 'from-zero': {
           axisMin = 0
           break
-        case 'from-min':
+        }
+        case 'from-min': {
           axisMin = dataMin - (dataMax - dataMin)
           break
+        }
+        case 'adaptive': {
+          axisMin = adaptiveDomainMin(dataMin, dataMax, referenceSpan, config.valueScaleMinRatio, config.valueScaleMaxRatio)
+          break
+        }
         case 'from-delta':
-        default:
+        default: {
           axisMin = dataMax - config.valueScaleDelta
           break
+        }
       }
       steps.push(step)
       baselines.push(axisMin)

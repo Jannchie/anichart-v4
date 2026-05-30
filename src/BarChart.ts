@@ -1,7 +1,7 @@
 import type { ScaleLinear } from 'd3'
 import type { Config } from './Config'
 import type { RankedData } from './Data'
-import { blur, extent, InternSet } from 'd3'
+import { blur, extent, InternSet, median } from 'd3'
 import { Container, Graphics, Sprite, Text, TextStyle } from 'pixi.js'
 import { BarComponent, EXTRA_VALUE_LABEL_PADDING } from './bar'
 import { textureMap } from './resources'
@@ -35,6 +35,7 @@ export class BarChart extends Container {
   valueLabelStyle: TextStyle
   extraValueLabelStyle: TextStyle
   frameValueScales: ScaleLinear<number, number>[]
+  referenceSpan: number = 0
   frameIdSets: InternSet<string>[]
   frameMaxSteps: Array<number | undefined>
   barZOrder: string[]
@@ -101,8 +102,9 @@ export class BarChart extends Container {
     let smoothedMinValues = [...frameMinValues]
     let smoothedMaxValues = [...frameMaxValues]
     if (smoothingRadius > 0 && data.length > 1) {
-      smoothedMinValues = [...blur(frameMinValues, smoothingRadius) as Float64Array]
-      smoothedMaxValues = [...blur(frameMaxValues, smoothingRadius) as Float64Array]
+      // blur 会原地修改入参数组，传副本以保留 frameMin/MaxValues 的真实极值（domain 上界兜底要用真实 max）。
+      smoothedMinValues = [...blur([...frameMinValues], smoothingRadius) as Float64Array]
+      smoothedMaxValues = [...blur([...frameMaxValues], smoothingRadius) as Float64Array]
       for (let i = 0; i < data.length; i += 1) {
         if (Number.isNaN(smoothedMinValues[i])) {
           smoothedMinValues[i] = frameMinValues[i] ?? 0
@@ -112,10 +114,25 @@ export class BarChart extends Container {
         }
       }
     }
+    // adaptive 参考尺度：屏内首尾差距的中位数，作为软饱和半衰尺度（与 DataProcessor.buildBaselineScale 同步）。
+    const spans: number[] = []
+    for (let i = 0; i < data.length; i += 1) {
+      const s = (smoothedMaxValues[i] ?? 0) - (smoothedMinValues[i] ?? 0)
+      if (s > 0) {
+        spans.push(s)
+      }
+    }
+    this.referenceSpan = median(spans) ?? 1
+    const adaptiveOptions = {
+      referenceSpan: this.referenceSpan,
+      minRatio: config.valueScaleMinRatio,
+      maxRatio: config.valueScaleMaxRatio,
+    }
     for (let i = 0; i < data.length; i += 1) {
       const minValue = smoothedMinValues[i] ?? frameMinValues[i] ?? 0
-      const maxValue = smoothedMaxValues[i] ?? frameMaxValues[i] ?? 0
-      frameValueScales[i] = getValueScale(config.valueScaleType, minValue, maxValue, config.valueScaleDelta)
+      // domain 上界不低于当前帧真实 max：平滑滞后会把上升中的榜首 clamp，使柱长对应的刻度 < 数值标签。
+      const maxValue = Math.max(smoothedMaxValues[i] ?? 0, frameMaxValues[i] ?? 0)
+      frameValueScales[i] = getValueScale(config.valueScaleType, minValue, maxValue, config.valueScaleDelta, adaptiveOptions)
     }
 
     const ticksAlphaMap = new Map<number, Array<number>>()
@@ -399,7 +416,11 @@ export class BarChart extends Container {
     if (!valueScale) {
       const visible = data.filter(item => item.alpha >= 1)
       const [min, max] = extent(visible, d => d.value)
-      valueScale = getValueScale(config.valueScaleType, min, max, config.valueScaleDelta)
+      valueScale = getValueScale(config.valueScaleType, min, max, config.valueScaleDelta, {
+        referenceSpan: this.referenceSpan,
+        minRatio: config.valueScaleMinRatio,
+        maxRatio: config.valueScaleMaxRatio,
+      })
       this.frameValueScales[idx] = valueScale
     }
     for (const [tick, alphaList] of this.ticksAlphaMap.entries()) {

@@ -18,7 +18,7 @@ const config = new Config({
   topN: 16,
   showLabel: false,
   showStepLabel: true,
-  valueScaleType: 'from-delta',
+  valueScaleType: 'adaptive',
   getStep: d => Number(d.date) * 1000,
   getStepLabel: step => dayjs(step).format('YYYY-MM-DD'),
   getValueLabel: data => ratingFormatter.format(data.value),

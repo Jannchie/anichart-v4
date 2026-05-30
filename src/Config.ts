@@ -2,7 +2,7 @@ import type { Data } from './Data'
 import dayjs from 'dayjs'
 import { colorMap, colors } from './resources'
 
-export type ValueScaleType = 'from-zero' | 'from-min' | 'from-delta'
+export type ValueScaleType = 'from-zero' | 'from-min' | 'from-delta' | 'adaptive'
 
 // 当前只有 velocity；未来扩展时往 union 加成员，并在 DataProcessor 的 SWAP_ALGORITHMS 注册表里注册实现。
 export type SwapAlgorithmName = 'velocity'
@@ -38,6 +38,8 @@ interface IConfig {
   barHeight: number
   valueScaleType: ValueScaleType
   valueScaleDelta: number
+  valueScaleMinRatio: number // adaptive：首尾差距极大时，最后一条相对第一条的最短长度比例（软饱和下界）
+  valueScaleMaxRatio: number // adaptive：首尾差距极小时，最后一条相对第一条的最长长度比例（软饱和上界）
   valueScaleSmoothing: number
   leftLabelPadding: number
   valueLabelPadding: number
@@ -87,6 +89,8 @@ export class Config {
   barHeight: number
   autoBarHeight: boolean = true
   valueScaleType: ValueScaleType
+  valueScaleMinRatio: number
+  valueScaleMaxRatio: number
   valueScaleSmoothing: number
   leftLabelPadding: number
   valueLabelPadding: number
@@ -148,6 +152,8 @@ export class Config {
     this.barHeight = 24
     this.valueScaleType = 'from-zero'
     this.valueScaleDelta = 300
+    this.valueScaleMinRatio = 0.15
+    this.valueScaleMaxRatio = 0.55
     this.valueScaleSmoothing = 0
     this.leftLabelPadding = 5
     this.valueLabelPadding = 5
