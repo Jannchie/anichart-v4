@@ -751,8 +751,8 @@ describe('dataprocessor.applyvelocity', () => {
 })
 
 describe('dataprocessor.swapalgorithm.dispatch', () => {
-  it('default config.swapalgorithm is "velocity"', () => {
-    expect(new Config().swapAlgorithm).toBe('velocity')
+  it('default config.swapalgorithm is "velocity-accel"', () => {
+    expect(new Config().swapAlgorithm).toBe('velocity-accel')
   })
 
   it('addtailingframes dispatches to velocity and writes blurrank', () => {

@@ -230,13 +230,13 @@ export class Config {
     // ---- 时间 / 规模 ----
     this.maxRetentionTimeSec = input.maxRetentionTimeSec ?? 50
     this.transitionDurationSec = input.transitionDurationSec ?? 4
-    this.totalDurationSec = input.totalDurationSec ?? 10
+    this.totalDurationSec = input.totalDurationSec ?? 60
     this.fps = input.fps ?? 60
-    this.topN = input.topN ?? 20
+    this.topN = input.topN ?? 16
 
     // ---- 动画：归一到扁平字段 ----
     const swap = input.swap ?? {}
-    this.swapAlgorithm = swap.algorithm ?? 'velocity'
+    this.swapAlgorithm = swap.algorithm ?? 'velocity-accel'
     this.swapDurationSec = swap.durationSec ?? 0.8
     this.swapAccelBoost = swap.accelBoost ?? 2
 
@@ -244,7 +244,7 @@ export class Config {
     this.lineTimeAxisMode = line.timeAxis ?? 'dynamic'
     this.lineTimeWindowRatio = line.windowRatio ?? 0.35
 
-    const vs = input.valueScale ?? { type: 'from-zero' }
+    const vs = input.valueScale ?? { type: 'adaptive' }
     this.valueScaleType = vs.type
     this.valueScaleDelta = (vs.type === 'from-delta' ? vs.delta : undefined) ?? 300
     this.valueScaleMinRatio = (vs.type === 'adaptive' ? vs.minRatio : undefined) ?? 0.15
@@ -261,7 +261,7 @@ export class Config {
 
     // ---- 显隐 / 文案 ----
     this.showStepLabel = input.showStepLabel ?? true
-    this.showLabel = input.showLabel ?? true
+    this.showLabel = input.showLabel ?? false
     this.xAxisLabel = input.xAxisLabel ?? ''
     this.title = input.title ?? ''
 
