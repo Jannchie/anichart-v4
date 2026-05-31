@@ -62,8 +62,6 @@ const colorMap = new Map([
   ['Tencent', 0x41_69_E1],
 ])
 
-const modelNameMap = new Map()
-
 const config = new Config({
   id: 'company',
   step: 'date',
@@ -85,7 +83,7 @@ const config = new Config({
     return colorStr ? Number.parseInt(colorStr.slice(1), 16) : 0x00_00_00
   },
   getBarInfo: (d) => {
-    const modelName = modelNameMap.get(d.raw?.model || d.model) || d.raw?.model || d.model || 'Unknown Model'
+    const modelName = d.raw?.model || d.model || 'Unknown Model'
     return `${modelName} - ${d.id}`
   },
 })
