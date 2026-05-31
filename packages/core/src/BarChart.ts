@@ -510,11 +510,14 @@ export class BarChart extends Container {
       const barWidth = widthForValue(d.value)
       const { valueText, extraText, totalWidth } = this.getValueLabelInfo(d, config)
       const canShowValue = totalWidth <= (this.totalAvailableWidth - barWidth)
+      // 不透明度只由纵向位置（blurRank → y）决定：可见区最下面一行（rank=topN-1）及其上方恒为 1；
+      // 越过底边、下沉到画面外停车位（rank=topN）的一格行程内线性衰减到 0。入场柱自下浮起同理淡入。
+      const yAlpha = Math.max(0, Math.min(1, config.topN - d.blurRank))
       bar.update({
         y: d.blurRank * (config.barHeight + config.barGap),
         label: d.label,
         width: barWidth,
-        alpha: d.alpha,
+        alpha: yAlpha,
         color: config.getColor(d),
         valueLabel: canShowValue ? valueText : '',
         extraValueLabel: canShowValue ? extraText : '',
