@@ -1,5 +1,7 @@
 import type { RankedData } from '@anichart/core'
+import type { DSVRowArray } from 'd3'
 import { BarChart, computeInversionMetrics, Config, DataProcessor, LineChart } from '@anichart/core'
+import { csv } from 'd3'
 import dayjs from 'dayjs'
 import { Application } from 'pixi.js'
 import './style.css'
@@ -93,11 +95,22 @@ chartSelect.add(new Option('Line', 'line'))
 chartSelect.value = 'bar'
 chartSelect.title = '图表类型'
 
-const algoSelect = makeSelect()
-algoSelect.add(new Option('velocity', 'velocity'))
-algoSelect.add(new Option('velocity-accel', 'velocity-accel'))
-algoSelect.value = config.swapAlgorithm
-algoSelect.title = '换位算法（逆序对比）'
+// 加速度强度 boost：0 即纯 velocity，越大暴涨柱越快收敛（软饱和封顶）。始终走 accel，强度全由 boost 控制。
+config.swapAlgorithm = 'velocity-accel'
+const boostSlider = document.createElement('input')
+boostSlider.type = 'range'
+boostSlider.min = '0'
+boostSlider.max = '3'
+boostSlider.step = '0.1'
+boostSlider.value = config.swapAccelBoost.toString()
+boostSlider.title = '加速度强度 boost（0 = velocity）'
+boostSlider.style.width = '90px'
+const boostLabel = document.createElement('span')
+boostLabel.className = 'ctrl-label ctrl-label--muted'
+boostLabel.textContent = `boost ${config.swapAccelBoost.toFixed(1)}`
+const metricsLabel = document.createElement('span')
+metricsLabel.className = 'ctrl-label ctrl-label--muted'
+metricsLabel.title = '逆序对×帧 / 惯性能量'
 
 const timeAxisSelect = makeSelect()
 timeAxisSelect.add(new Option('动态贴合', 'dynamic'))
@@ -138,7 +151,8 @@ speedSelect.title = '播放速率 ([ / ])'
 
 controls.append(
   chartSelect,
-  algoSelect,
+  boostSlider,
+  boostLabel,
   timeAxisSelect,
   makeDivider(),
   firstFrameBtn,
@@ -152,6 +166,8 @@ controls.append(
   frameLabel,
   makeDivider(),
   speedSelect,
+  makeDivider(),
+  metricsLabel,
 )
 
 let data: RankedData[][] = []
@@ -426,26 +442,33 @@ function handleResize() {
   rebuildChart()
 }
 
+let rawRows: DSVRowArray<string> | null = null
 async function loadData() {
-  data = await DataProcessor.processCSV('/llm.csv', config)
+  // 缓存已解析的 csv：调 boost 时只重跑处理、不重新下载
+  rawRows ??= await csv('/llm.csv')
+  data = DataProcessor.processRows(rawRows, config)
   const m = computeInversionMetrics(data, { fps: config.fps })
-  // eslint-disable-next-line no-console
-  console.log(
-    `[${config.swapAlgorithm}] 逆序帧 ${m.inversionFrames} (${m.inversionSeconds.toFixed(1)}s) · `
-    + `逆序对×帧 ${m.inversionPairFrames} · 单帧最深 ${m.maxDepth} · 惯性能量 ${m.smoothnessEnergy.toFixed(0)}`,
-  )
+  metricsLabel.textContent = `逆序对×帧 ${m.inversionPairFrames} · 惯性 ${m.smoothnessEnergy.toFixed(0)}`
 }
 
-algoSelect.addEventListener('change', async () => {
-  config.swapAlgorithm = algoSelect.value === 'velocity' ? 'velocity' : 'velocity-accel'
-  const keepFrame = currentFrame
-  setPauseState(true)
-  await loadData()
-  const maxFrame = Math.max(data.length - 1, 0)
-  progress.max = maxFrame.toString()
-  currentFrame = Math.min(keepFrame, maxFrame)
-  rebuildChart()
-  renderFrame(currentFrame)
+let boostRaf: number | undefined
+boostSlider.addEventListener('input', () => {
+  config.swapAccelBoost = Number(boostSlider.value)
+  boostLabel.textContent = `boost ${config.swapAccelBoost.toFixed(1)}`
+  // 合并一帧内的多次拖动，只重算一次
+  if (boostRaf !== undefined) {
+    return
+  }
+  boostRaf = requestAnimationFrame(async () => {
+    boostRaf = undefined
+    const keepFrame = currentFrame
+    await loadData()
+    const maxFrame = Math.max(data.length - 1, 0)
+    progress.max = maxFrame.toString()
+    currentFrame = Math.min(keepFrame, maxFrame)
+    rebuildChart()
+    renderFrame(currentFrame)
+  })
 })
 
 ;(async () => {
