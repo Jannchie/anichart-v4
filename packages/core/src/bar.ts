@@ -7,6 +7,37 @@ export const EXTRA_VALUE_LABEL_PADDING = 8
 // reverse 模式下图片相对柱高的缩放，留出与文字并排的视觉余量。
 const REVERSE_IMAGE_SCALE = 0.7
 
+// 把 0xRRGGBB 朝白（amt>0）或黑（amt<0）混合，|amt| 为混合比例。用于数值标签提亮。
+function shade(color: number, amt: number): number {
+  const r = (color >> 16) & 0xFF
+  const g = (color >> 8) & 0xFF
+  const b = color & 0xFF
+  const target = amt < 0 ? 0 : 255
+  const p = Math.abs(amt)
+  const nr = Math.round((target - r) * p + r)
+  const ng = Math.round((target - g) * p + g)
+  const nb = Math.round((target - b) * p + b)
+  return (nr << 16) | (ng << 8) | nb
+}
+
+// 只圆右侧两角：柱子从左侧轴线生长，右端做圆头，左端贴轴保持直角。
+// 调用方负责随后 fill()。
+function drawRightRoundedBar(g: Graphics, w: number, h: number, r: number): void {
+  g.clear()
+  const rr = Math.max(0, Math.min(r, w, h / 2))
+  if (rr <= 0) {
+    g.rect(0, 0, w, h)
+    return
+  }
+  g.moveTo(0, 0)
+  g.lineTo(w - rr, 0)
+  g.arcTo(w, 0, w, rr, rr) // 右上角
+  g.lineTo(w, h - rr)
+  g.arcTo(w, h, w - rr, h, rr) // 右下角
+  g.lineTo(0, h)
+  g.closePath()
+}
+
 interface BarItemSettings {
   x: number
   y: number
@@ -101,11 +132,12 @@ export class BarComponent extends Container {
         fontSize: valueFontSize,
         fill: settings.colorBarInfo,
         fontWeight: 'bold',
+        // 更柔和的投影：几乎无偏移、模糊更大，只为在彩色柱面上保证可读性，去掉老式硬投影。
         dropShadow: {
           color: 0x00_00_00,
-          alpha: 0.5,
-          blur: 2,
-          distance: 4,
+          alpha: 0.35,
+          blur: 4,
+          distance: 1,
         },
       },
     })
@@ -118,9 +150,9 @@ export class BarComponent extends Container {
         fill: settings.colorLabel,
         dropShadow: {
           color: 0x00_00_00,
-          alpha: 0.5,
-          blur: 2,
-          distance: 4,
+          alpha: 0.35,
+          blur: 4,
+          distance: 1,
         },
       },
     })
@@ -243,28 +275,22 @@ export class BarComponent extends Container {
       this.bar.position.set(barX, 0)
       const barWidth = width
       const radius = this.settings.radius ?? 0
+      const colorChanged = color !== this.lastBarColor
+
+      if (colorChanged) {
+        // 数值标签用「柱色的提亮版」，比纯白更协调、仍清晰。
+        this.valueLabel.style.fill = shade(color, 0.55)
+      }
+
       const shouldRedraw = barWidth !== this.lastBarWidth
         || height !== this.lastBarHeight
-        || color !== this.lastBarColor
+        || colorChanged
         || radius !== this.lastBarRadius
 
       if (shouldRedraw) {
-        barItemMask.clear()
-        if (radius) {
-          barItemMask.roundRect(0, 0, barWidth, height, radius)
-        }
-        else {
-          barItemMask.rect(0, 0, barWidth, height)
-        }
+        drawRightRoundedBar(barItemMask, barWidth, height, radius)
         barItemMask.fill(color)
-
-        barItem.clear()
-        if (radius) {
-          barItem.roundRect(0, 0, barWidth, height, radius)
-        }
-        else {
-          barItem.rect(0, 0, barWidth, height)
-        }
+        drawRightRoundedBar(barItem, barWidth, height, radius)
         barItem.fill(color)
 
         this.lastBarWidth = barWidth

@@ -143,6 +143,7 @@ export function buildConfig(spec: ChartSpec): ConfigOptions {
     color: colorField,
     label: labelField,
     getValueLabel: (d: any) => fmt.format(Number(d.value)),
+    getTickLabel: (v: number) => fmt.format(v),
     getBarInfo: (d: any) => d.raw?.[labelField] ?? d.id,
     title: spec.title,
     xAxisLabel: spec.xAxisLabel,

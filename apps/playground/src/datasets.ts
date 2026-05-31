@@ -171,6 +171,7 @@ export const DATASETS: DatasetDef[] = [
       title: '各国 GDP',
       getStepLabel: step => String(Math.round(step)),
       getValueLabel: d => formatUSD(d.value),
+      getTickLabel: v => formatUSD(v),
     }),
   },
 ]

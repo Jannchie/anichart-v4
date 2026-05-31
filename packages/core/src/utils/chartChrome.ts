@@ -5,7 +5,7 @@ import { blur, median } from 'd3'
 export const TITLE_FONT_SIZE = 36
 export const TITLE_PADDING = 24
 export const MUTED_LABEL_COLOR = 0xAA_AA_AA // 刻度文字、轴标签等次要文字
-export const TICK_LINE_COLOR = 0x33_33_33 // 刻度引导线
+export const TICK_LINE_COLOR = 0x26_26_2E // 刻度引导线（比原先更淡、略偏冷，弱化网格存在感）
 
 // 屏内首尾差距的中位数，作为 adaptive 软饱和的参考尺度（半衰尺度）。
 // BarChart 构造期与 DataProcessor.buildBaselineScale 共用同一份计算，

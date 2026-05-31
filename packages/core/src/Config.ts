@@ -68,6 +68,7 @@ export interface ConfigInput {
   getValueExtra?: (d: Data) => string
   getBarInfo?: (d: any, i?: number, step?: number) => any
   getStepLabel?: (step: number) => string
+  getTickLabel?: (value: number) => string // X 轴刻度文案；默认 String（如 GDP 可格式化成 $2T）
 
   // 时间 / 规模。
   maxRetentionTimeSec?: number
@@ -143,6 +144,7 @@ export class Config {
   getValueExtra: (d: Data) => string
   getBarInfo: (d: any, i?: number, step?: number) => any
   getStepLabel: (step: number) => string
+  getTickLabel: (value: number) => string
   // 内部派生的列名（仅默认解析 / preprocess / 取图用）。
   idField: string
   labelField: string
@@ -229,6 +231,7 @@ export class Config {
     this.getValueExtra = input.getValueExtra ?? (() => '')
     this.getBarInfo = input.getBarInfo ?? ((d: any) => d.id)
     this.getStepLabel = input.getStepLabel ?? ((step: number) => dayjs(step).format('YYYY-MM-DD'))
+    this.getTickLabel = input.getTickLabel ?? String
 
     // ---- 时间 / 规模 ----
     this.maxRetentionTimeSec = input.maxRetentionTimeSec ?? 50

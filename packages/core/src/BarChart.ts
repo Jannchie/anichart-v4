@@ -12,6 +12,14 @@ import { measureTextWidth } from './utils/textMetrics'
 
 const Z_ORDER_HYSTERESIS = 1
 
+// 画一条竖向虚线（刻度引导线）。PIXI Graphics 无原生虚线，按 dash/gap 拆成多段。
+function dashedVerticalLine(g: Graphics, x: number, y0: number, y1: number, dash = 5, gap = 7): void {
+  for (let y = y0; y < y1; y += dash + gap) {
+    g.moveTo(x, y)
+    g.lineTo(x, Math.min(y + dash, y1))
+  }
+}
+
 export class BarChart extends Container {
   maxBarWidth: number
   barComponentMap: Map<string, BarComponent>
@@ -97,6 +105,10 @@ export class BarChart extends Container {
     if (config.autoBarHeight) {
       config.barHeight = ((config.height - titleOffset - this.tickLabelHeight - xAxisLabelPaddingUsed - xAxisLabelHeight) / config.topN) - config.barGap
     }
+    // 圆角（只作用于柱子右端）：显式 borderRadius 优先；未设置（0）时按柱高自适应一个克制的小圆角。
+    const effRadius = config.borderRadius > 0
+      ? config.borderRadius
+      : Math.min(Math.max(config.barHeight * 0.14, 2), 7)
     const labelMap = new Map<string, string>()
     for (const item of data.flat()) {
       if (!labelMap.has(item.id)) {
@@ -123,7 +135,7 @@ export class BarChart extends Container {
         leftLabelWidth: maxLabelWidth,
         showLabel: config.showLabel,
         valueLabelPadding: config.valueLabelPadding,
-        radius: config.borderRadius,
+        radius: effRadius,
       })
       return [id, comp]
     }))
@@ -298,7 +310,7 @@ export class BarChart extends Container {
           numberList[i] = 1
           ticksAlphaMap.set(tick, numberList)
           const tickText = new Text({
-            text: tick.toString(),
+            text: config.getTickLabel(tick),
             style: {
               fontSize: config.tickLabelFontSize,
               fill: MUTED_LABEL_COLOR,
@@ -323,8 +335,7 @@ export class BarChart extends Container {
 
           const tickLabelHeight = tickBounds.height
           this.tickLabelHeight = tickLabelHeight
-          tickLine.moveTo(tickWidth / 2, this.tickLabelHeight)
-          tickLine.lineTo(tickWidth / 2, config.height - xAxisLabelHeight - xAxisLabelPaddingUsed)
+          dashedVerticalLine(tickLine, tickWidth / 2, this.tickLabelHeight, config.height - xAxisLabelHeight - xAxisLabelPaddingUsed)
           tickLine.stroke()
 
           tickComp.position.set(-tickWidth / 2, 0)
