@@ -69,15 +69,11 @@ const config = new Config({
   step: 'date',
   value: 'rating',
   xAxisLabel: 'LMSYS Chatbot Arena Elo Rating',
-  maxRetentionTimeSec: 5,
   getStepLabel(step) {
     const date = new Date(step * 1000)
     return timeFormat('%Y-%m-%d')(date)
   },
-  swap: { durationSec: 0.5 },
-  valueScale: { type: 'from-delta', delta: 250 },
   y: 0,
-  transitionDurationSec: 12,
   label: '-',
   topN: 16,
   totalDurationSec: 120,
