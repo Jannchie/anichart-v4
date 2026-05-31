@@ -10,14 +10,14 @@ async function upload() {
   if (!file.value)
     return
   status.value = '请求上传地址…'
-  // 1) 取预签名 URL
-  const { url, key } = await $fetch<{ url: string, key: string }>('/api/datasets/presign', {
+  // 1) 取预签名 URL（带文件大小，供服务端校验上限）
+  const { url, key, contentType } = await $fetch<{ url: string, key: string, contentType: string }>('/api/datasets/presign', {
     method: 'POST',
-    body: { filename: file.value.name, contentType: file.value.type || 'text/csv' },
+    body: { filename: file.value.name, contentType: file.value.type || 'text/csv', size: file.value.size },
   })
-  // 2) 直传对象存储
+  // 2) 直传对象存储；Content-Type 必须与预签名时一致，否则签名校验失败
   status.value = '上传中…'
-  await fetch(url, { method: 'PUT', body: file.value })
+  await fetch(url, { method: 'PUT', body: file.value, headers: { 'Content-Type': contentType } })
   // 3) TODO(future): 调用 /api/datasets 落库（解析列名/行数），再跳到图表配置页
   status.value = `已上传：${key}`
 }
