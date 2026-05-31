@@ -226,7 +226,7 @@ export class DataProcessor {
   }
 
   // 区间判定：
-  //   [first, last]                        → inside: piecewise easing 插值，alpha=1
+  //   [first, last]                        → inside: 点间线性插值（匀速、无顿挫），alpha=1
   //   (last, last + carry]                 → carry-forward: value=lastValue, alpha=1
   //   [first - trans, first)               → enter: value 从 baseline (axis min) 缓动到 firstValue, alpha 0→1
   //   (last + carry, last + carry + trans] → exit:  value 从 lastValue 缓动到 baseline (axis min), alpha 1→0
@@ -313,7 +313,10 @@ export class DataProcessor {
       return a.value
     }
     const t = (step - a.step) / (b.step - a.step)
-    return lerp(a.value, b.value, easeInOutCubic(t))
+    // 点间线性插值（匀速）。曾用 easeInOutCubic，但它在每个数据点处把速度降到 0，
+    // 形成「加速→停顿→加速」的顿挫：稀疏数据（如 GDP 年度点）每个点一抖，密集数据
+    // （如围棋逐局评分）则高频抽搐。线性插值速度恒定、点处不停顿，运动连续平滑。
+    return lerp(a.value, b.value, t)
   }
 
   private static rawNearStep(seg: Segment, step: number): any {

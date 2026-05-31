@@ -73,9 +73,6 @@ function createData(id: string, step: number, value: number, overrides: Partial<
   return Object.assign(base, overrides)
 }
 
-function easeInOutCubic(x: number): number {
-  return x < 0.5 ? 4 * x * x * x : 1 - ((-2 * x + 2) ** 3) / 2
-}
 const lerp = (a: number, b: number, t: number): number => a + (b - a) * t
 
 describe('dataprocessor.buildsamplers', () => {
@@ -212,16 +209,16 @@ describe('dataprocessor.sampleatstep', () => {
     }],
   })
 
-  it('returns inside-segment piecewise easing interpolation with alpha=1', () => {
+  it('returns inside-segment linear interpolation with alpha=1', () => {
     const sampler = makeSampler([[0, 10], [10, 20]])
     const mid = sampleAtStep(sampler, 5, 0, 2)
-    // ease(0.5) = 0.5 → value = (10 + 20) / 2 = 15
+    // 线性 t=0.5 → value = (10 + 20) / 2 = 15
     expect(mid.value).toBeCloseTo(15, 5)
     expect(mid.alpha).toBe(1)
 
     const early = sampleAtStep(sampler, 2.5, 0, 2)
-    // ease(0.25) ≈ 0.0625 → value ≈ 10 + 10 * 0.0625 = 10.625
-    expect(early.value).toBeCloseTo(lerp(10, 20, easeInOutCubic(0.25)), 5)
+    // 线性 t=0.25 → value = 10 + 10 * 0.25 = 12.5（匀速，点处不顿挫）
+    expect(early.value).toBeCloseTo(lerp(10, 20, 0.25), 5)
     expect(early.alpha).toBe(1)
   })
 
