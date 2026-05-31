@@ -1,0 +1,310 @@
+<script setup lang="ts">
+import type { RankedData } from '@anichart/core'
+import type { DSVRowArray } from 'd3'
+import type { ChartSpec } from '~/lib/chart-spec'
+import { BarChart, Config, DataProcessor, LineChart } from '@anichart/core'
+import { Application } from 'pixi.js'
+import { buildConfig, parseCsv } from '~/lib/chart-spec'
+
+// 复用 @anichart/core 在浏览器里逐帧实时播放。编辑页预览与详情页播放共用这一个组件。
+const props = withDefaults(defineProps<{
+  csvText: string
+  spec: ChartSpec
+  controls?: boolean
+  autoplay?: boolean
+}>(), { controls: true, autoplay: true })
+
+const SPEED_OPTIONS = [0.5, 1, 2, 4] as const
+
+const wrap = ref<HTMLDivElement>()
+const error = ref('')
+const ready = ref(false)
+
+const isPaused = ref(false)
+const currentFrame = ref(0)
+const totalFrames = ref(0)
+const speed = ref(1)
+
+let app: Application | undefined
+let chart: BarChart | LineChart | undefined
+let rawRows: DSVRowArray<string> | null = null
+let data: RankedData[][] = []
+let rafId: number | undefined
+let lastTime = 0
+let accumulator = 0
+let resumeAfterScrub = false
+let rebuildToken: number | undefined
+
+const progressPct = computed(() => totalFrames.value > 0 ? (currentFrame.value / totalFrames.value) * 100 : 0)
+
+function fmtTime(frame: number) {
+  const sec = Math.max(0, frame) / (props.spec.fps || 60)
+  const m = Math.floor(sec / 60)
+  const s = Math.floor(sec % 60)
+  return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
+}
+
+function measure() {
+  const r = wrap.value?.getBoundingClientRect()
+  return { w: Math.max(1, Math.floor(r?.width ?? 960)), h: Math.max(1, Math.floor(r?.height ?? 540)) }
+}
+
+function makeConfig(w: number, h: number) {
+  const cfg = new Config(buildConfig(props.spec))
+  cfg.canvasWidth = w
+  cfg.canvasHeight = h
+  cfg.width = Math.max(w - 20, 0)
+  cfg.height = Math.max(h - 20, 0)
+  return cfg
+}
+
+function renderFrame(frame: number) {
+  if (!chart || data.length === 0)
+    return
+  const safe = Math.min(Math.max(frame, 0), data.length - 1)
+  chart.update(safe)
+  currentFrame.value = safe
+}
+
+// 重建：可选地重新解析/处理数据，再按当前尺寸重建图表对象。
+function build({ reprocess }: { reprocess: boolean }) {
+  if (!app)
+    return
+  const token = (rebuildToken = (rebuildToken ?? 0) + 1)
+  try {
+    const { w, h } = measure()
+    app.renderer.resize(w, h)
+    const cfg = makeConfig(w, h)
+
+    if (reprocess || data.length === 0) {
+      rawRows ??= parseCsv(props.csvText)
+      if (!rawRows.length)
+        throw new Error('数据为空')
+      data = DataProcessor.processRows(rawRows, cfg)
+      totalFrames.value = Math.max(data.length - 1, 0)
+    }
+
+    if (chart) {
+      chart.removeFromParent()
+      chart.destroy({ children: true })
+    }
+    chart = props.spec.kind === 'line' ? new LineChart(data, cfg) : new BarChart(data, cfg)
+    app.stage.addChild(chart)
+
+    if (token !== rebuildToken)
+      return
+    error.value = ''
+    renderFrame(Math.min(currentFrame.value, totalFrames.value))
+  }
+  catch (e) {
+    error.value = e instanceof Error ? e.message : '渲染失败，请检查字段映射'
+  }
+}
+
+function loop(now: number) {
+  if (lastTime === 0)
+    lastTime = now
+  const dt = (now - lastTime) / 1000
+  lastTime = now
+  if (!isPaused.value && data.length > 0) {
+    accumulator += dt * (props.spec.fps || 60) * speed.value
+    const advance = Math.floor(accumulator)
+    if (advance > 0) {
+      accumulator -= advance
+      let next = currentFrame.value + advance
+      if (next >= data.length)
+        next %= data.length
+      renderFrame(next)
+    }
+  }
+  rafId = requestAnimationFrame(loop)
+}
+
+function setPaused(p: boolean) {
+  isPaused.value = p
+  if (!p) {
+    accumulator = 0
+    lastTime = performance.now()
+  }
+}
+function toggle() { setPaused(!isPaused.value) }
+function stepBy(d: number) {
+  setPaused(true)
+  renderFrame(currentFrame.value + d)
+}
+function onScrubStart() {
+  if (!isPaused.value) {
+    resumeAfterScrub = true
+    setPaused(true)
+  }
+}
+function onScrubEnd() {
+  if (resumeAfterScrub) {
+    resumeAfterScrub = false
+    setPaused(false)
+  }
+}
+function onScrub(e: Event) {
+  renderFrame(Number((e.target as HTMLInputElement).value) || 0)
+}
+function cycleSpeed() {
+  const i = SPEED_OPTIONS.indexOf(speed.value as typeof SPEED_OPTIONS[number])
+  speed.value = SPEED_OPTIONS[(i + 1) % SPEED_OPTIONS.length]
+}
+
+// 截当前帧为 dataURL，供画廊封面用。
+async function captureThumbnail(): Promise<string | undefined> {
+  if (!app || data.length === 0)
+    return undefined
+  try {
+    return await app.renderer.extract.base64(app.stage)
+  }
+  catch {
+    return undefined
+  }
+}
+defineExpose({ captureThumbnail })
+
+let ro: ResizeObserver | undefined
+onMounted(async () => {
+  if (!wrap.value)
+    return
+  app = new Application()
+  const { w, h } = measure()
+  await app.init({ background: props.spec.backgroundColor, antialias: true, resolution: Math.min(globalThis.devicePixelRatio || 1, 2), autoDensity: true })
+  app.renderer.resize(w, h)
+  const canvas = app.canvas as HTMLCanvasElement
+  canvas.style.width = '100%'
+  canvas.style.height = '100%'
+  canvas.style.display = 'block'
+  wrap.value.append(canvas)
+
+  build({ reprocess: true })
+  ready.value = true
+  setPaused(!props.autoplay)
+  lastTime = 0
+  rafId = requestAnimationFrame(loop)
+
+  ro = new ResizeObserver(() => build({ reprocess: false }))
+  ro.observe(wrap.value)
+})
+
+// 数据变化 → 重新解析处理；spec 变化 → 重新处理（topN/时长/动画都依赖它）。合并到一帧避免拖动卡顿。
+let pending: number | undefined
+function scheduleRebuild(reprocess: boolean) {
+  if (pending !== undefined)
+    return
+  pending = requestAnimationFrame(() => {
+    pending = undefined
+    build({ reprocess })
+  })
+}
+watch(() => props.csvText, () => { rawRows = null; scheduleRebuild(true) })
+watch(() => props.spec, () => scheduleRebuild(true), { deep: true })
+watch(() => props.spec.backgroundColor, (c) => {
+  if (app)
+    app.renderer.background.color = c
+})
+
+onBeforeUnmount(() => {
+  if (rafId !== undefined)
+    cancelAnimationFrame(rafId)
+  ro?.disconnect()
+  app?.destroy(true)
+})
+</script>
+
+<template>
+  <div class="canvas-shell">
+    <div ref="wrap" class="canvas-wrap" :style="{ background: spec.backgroundColor }" />
+
+    <div v-if="error" class="overlay error">
+      <span>⚠ {{ error }}</span>
+    </div>
+    <div v-else-if="!ready" class="overlay">
+      <span class="dim">加载预览…</span>
+    </div>
+
+    <div v-if="controls && ready && !error" class="controls">
+      <button class="ico" :title="isPaused ? '播放' : '暂停'" @click="toggle">
+        {{ isPaused ? '▶' : '⏸' }}
+      </button>
+      <button class="ico" title="后退一帧" @click="stepBy(-1)">
+        ◀
+      </button>
+      <button class="ico" title="前进一帧" @click="stepBy(1)">
+        ▶
+      </button>
+      <input
+        class="bar" type="range" min="0" :max="totalFrames" :value="currentFrame"
+        :style="{ '--range-progress': `${progressPct}%` }"
+        @pointerdown="onScrubStart" @pointerup="onScrubEnd" @pointercancel="onScrubEnd" @input="onScrub"
+      >
+      <span class="time">{{ fmtTime(currentFrame) }} / {{ fmtTime(totalFrames) }}</span>
+      <button class="ico speed" title="播放速率" @click="cycleSpeed">
+        {{ speed }}x
+      </button>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.canvas-shell { position: relative; width: 100%; height: 100%; }
+.canvas-wrap { position: absolute; inset: 0; overflow: hidden; }
+
+.overlay {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; pointer-events: none;
+}
+.overlay.error { color: #fca5a5; }
+.overlay .dim { color: rgba(255, 255, 255, 0.5); }
+
+.controls {
+  position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 4px;
+  max-width: calc(100% - 24px);
+  padding: 6px 8px;
+  background: rgba(20, 20, 24, 0.66);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 13px;
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  color: #f4f5f6;
+  user-select: none;
+}
+.controls .ico {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 32px; height: 30px; padding: 0 8px;
+  background: transparent; border: none; border-radius: 8px;
+  color: inherit; font-size: 13px; line-height: 1; cursor: pointer;
+  transition: background 0.15s ease, transform 0.08s ease;
+}
+.controls .ico:hover { background: rgba(255, 255, 255, 0.1); }
+.controls .ico:active { transform: scale(0.9); }
+.controls .speed { font-variant-numeric: tabular-nums; min-width: 38px; font-size: 12.5px; }
+
+.controls .time {
+  min-width: 92px; text-align: center;
+  font-size: 12px; font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.controls .bar {
+  -webkit-appearance: none; appearance: none;
+  width: 200px; max-width: 32vw; height: 30px; margin: 0 4px; background: transparent; cursor: pointer;
+}
+.controls .bar::-webkit-slider-runnable-track {
+  height: 4px; border-radius: 999px;
+  background: linear-gradient(to right,
+    #5b8cff 0%, #5b8cff var(--range-progress, 0%),
+    rgba(255, 255, 255, 0.18) var(--range-progress, 0%), rgba(255, 255, 255, 0.18) 100%);
+}
+.controls .bar::-moz-range-track { height: 4px; border-radius: 999px; background: rgba(255, 255, 255, 0.18); }
+.controls .bar::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 13px; height: 13px; margin-top: -4.5px;
+  border-radius: 50%; background: #fff; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+}
+.controls .bar::-moz-range-thumb { width: 13px; height: 13px; border: none; border-radius: 50%; background: #fff; }
+</style>

@@ -3,6 +3,8 @@ export default defineNuxtConfig({
   compatibilityDate: '2025-05-30',
   devtools: { enabled: true },
 
+  css: ['~/assets/css/main.css'],
+
   // PIXI 实时播放器只在客户端运行，避免 SSR 时引入 WebGL/DOM
   ssr: true,
 
