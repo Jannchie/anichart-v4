@@ -14,7 +14,6 @@ interface BarItemSettings {
   fontFamily: string
   fontSize: number
   colorLabel: number
-  colorBar: number
   barInfo: string
   colorBarInfo: number
   leftLabelPadding: number
@@ -27,7 +26,6 @@ interface BarItemSettings {
   alpha: number
   radius: number
   image?: Sprite
-  tickNumber?: number
   autoBarHeight: boolean
   showLabel: boolean
 
@@ -72,7 +70,6 @@ export class BarComponent extends Container {
       valueLabel: '0',
       alpha: 1,
       radius: 4,
-      tickNum: 8,
       barInfoStyle: 'default',
       autoBarHeight: true,
       showLabel: true,
