@@ -1,7 +1,8 @@
 import type { DSVRowArray } from 'd3'
 import type { Config, SwapAlgorithmName } from './Config'
 import type { Data, RankedData } from './Data'
-import { csv, extent, group, InternSet, median, range, scaleLinear } from 'd3'
+import { csv, extent, group, InternSet, range, scaleLinear } from 'd3'
+import { computeReferenceSpan } from './utils/chartChrome'
 import { adaptiveDomainMin } from './utils/scale'
 
 type SwapAlgorithm = (config: Config, result: RankedData[][]) => void
@@ -185,7 +186,7 @@ export class DataProcessor {
     })
     // adaptive 参考尺度：屏内首尾差距的中位数（与 BarChart.getValueScale 同步，保证入场/出场基线一致）。
     const referenceSpan = config.valueScaleType === 'adaptive'
-      ? (median(rows.map(r => r.dataMax - r.dataMin).filter(s => s > 0)) ?? 1)
+      ? computeReferenceSpan(rows.map(r => r.dataMax - r.dataMin))
       : 0
     const steps: number[] = []
     const baselines: number[] = []
@@ -363,14 +364,13 @@ export class DataProcessor {
   private static addTailingFrames(config: Config, result: RankedData[][]) {
     // 尾帧：保留足够多帧让最后一段 velocity-driven 位移收敛。多 rank 跳跃时间 ≈ swapDurationSec × Δrank/2，
     // 取 max(2s, 4×swapDurationSec) 作为保守上界（一般 4 rank 内收敛足够）。
-    const tailSec = Math.max(2, config.swapDurationSec * 4)
-    const swapFrames = Math.max(1, Math.round(tailSec * config.fps))
-    for (let i = 0; i < swapFrames; i++) {
-      const lastFrame = result.at(-1)
-      if (!lastFrame) {
-        break
+    const lastFrame = result.at(-1)
+    if (lastFrame) {
+      const tailSec = Math.max(2, config.swapDurationSec * 4)
+      const swapFrames = Math.max(1, Math.round(tailSec * config.fps))
+      for (let i = 0; i < swapFrames; i++) {
+        result.push(lastFrame.map(d => ({ ...d })))
       }
-      result.push(lastFrame.map(d => ({ ...d })))
     }
     // SWAP_ALGORITHMS 在文件末尾定义（其值引用本类静态方法，无法上移否则 TDZ）；此处运行期调用，const 已初始化。
     // eslint-disable-next-line ts/no-use-before-define
@@ -492,16 +492,17 @@ export class DataProcessor {
         raw: d,
         up: false,
       }
+      // 把数字样的额外列铺到 Data 上（label 列保留原字符串），方便自定义 accessor 直接读 d.<column>。
       for (const key in d) {
-        const rawValue = d[key]
+        const cellValue = d[key]
         if (key === config.labelField) {
-          result[key] = rawValue
+          result[key] = cellValue
           continue
         }
-        if (rawValue === result.id) {
+        if (cellValue === result.id) {
           continue
         }
-        const numericValue = Number(rawValue)
+        const numericValue = Number(cellValue)
         if (!Number.isNaN(numericValue)) {
           result[key] = numericValue as any
         }
@@ -511,12 +512,12 @@ export class DataProcessor {
     const topN = config.topN
     const stepGroup = group(temp, d => Math.floor(d.step))
     const idSet = new InternSet<string>()
-    for (const group of stepGroup.values()) {
-      group.sort((a, b) => b.value - a.value)
-      for (const d of group.slice(0, topN + 1)) idSet.add(d.id)
+    for (const stepRows of stepGroup.values()) {
+      stepRows.sort((a, b) => b.value - a.value)
+      for (const d of stepRows.slice(0, topN + 1)) idSet.add(d.id)
     }
     const idGroups = group(temp, d => d.id)
-    const data = [...idGroups.values()].filter(group => idSet.has(group[0].id)).flat()
+    const data = [...idGroups.values()].filter(rows => idSet.has(rows[0].id)).flat()
     return data
   }
 }

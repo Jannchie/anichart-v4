@@ -1,17 +1,16 @@
 import type { ScaleLinear } from 'd3'
 import type { Config } from './Config'
 import type { RankedData } from './Data'
-import { blur, extent, InternSet, median } from 'd3'
+import { blur, extent, InternSet } from 'd3'
 import { Container, Graphics, Sprite, Text, TextStyle } from 'pixi.js'
 import { BarComponent, EXTRA_VALUE_LABEL_PADDING } from './bar'
 import { textureMap } from './resources'
+import { computeReferenceSpan, MUTED_LABEL_COLOR, smoothTicksAlpha, TICK_LINE_COLOR, TITLE_FONT_SIZE, TITLE_PADDING } from './utils/chartChrome'
 import { getExtraValueLabelFontSize, getValueLabelFontSize } from './utils/labelFonts'
 import { getValueScale } from './utils/scale'
 import { measureTextWidth } from './utils/textMetrics'
 
 const Z_ORDER_HYSTERESIS = 1
-const TITLE_FONT_SIZE = 36
-const TITLE_PADDING = 24
 
 export class BarChart extends Container {
   maxBarWidth: number
@@ -45,25 +44,22 @@ export class BarChart extends Container {
     this.data = data
     this.tickWidthMap = new Map()
     this.textWidthCache = new Map()
-    const frameValueScales: ScaleLinear<number, number>[] = []
-    const frameIdSets: InternSet<string>[] = []
-    const frameMaxSteps: Array<number | undefined> = []
     const idList = [...new InternSet(data.flat().map(d => d.id))]
     const idImageMap = new Map(new InternSet(data.flat().map((d) => {
       return [d.id, textureMap.get(d.raw[config.imageField])]
     })))
     this.xAxis = new Container()
     this.xAxisTickContainer = new Container()
-    // 计算 ticks 对象
-    // 遍历 data
-    const frameMinValues: number[] = []
-    const frameMaxValues: number[] = []
+
+    // 每帧值域 scale / id 集合 / 最大 step + adaptive 参考尺度，预计算到帧数组。
+    const { frameValueScales, frameIdSets, frameMaxSteps, referenceSpan } = this.buildFrameScales(data, config)
+    this.referenceSpan = referenceSpan
 
     this.xAxisLabel = new Text({
       text: config.xAxisLabel,
       style: {
         fontSize: 32,
-        fill: 0xAA_AA_AA,
+        fill: MUTED_LABEL_COLOR,
         fontFamily: config.fontFamily,
       },
     })
@@ -72,129 +68,7 @@ export class BarChart extends Container {
     const xAxisLabelPaddingUsed = hasXAxisLabel ? this.xAxisLabelPadding : 0
     const xAxisLabelHeight = hasXAxisLabel ? this.xAxisLabel.height : 0
 
-    for (const [i, d] of data.entries()) {
-      // valueScale 的 min / max 取不同集合，避免入场/出场过渡 bar 造成 domain 阶跃或被拉低：
-      //   下界 min —— 只看 alpha>=1 的稳定 bar：过渡 bar value 正在向 baseline 趋近，
-      //     让它们定 min 会把值域往下拉甚至带到负区间，压扁正常 bar 宽度。
-      //   上界 max —— 看 alpha>0 的渐入 bar：入场新柱 value 随缓动从 baseline 平滑爬到真实值，
-      //     上界随之平滑抬升。若只认 alpha>=1，高分新柱在 alpha 渐近触及 1（easeInOutCubic 末端
-      //     极平，可停在 1−5e-7 多帧）前被「整段排除」，触顶那一帧突然纳入 → domain 上界阶跃
-      //     （坐标轴突跳）。出场 bar value 在降、不抬高 max，故纳入 emerging 集合安全。
-      // 直接读 item.value（展示值），不走 config.getValue —— getValue 默认取 raw[valueField]，
-      // 而新 DataProcessor 不再把 raw 字段铺到 Data 上。
-      const stable = d.filter(item => item.alpha >= 1)
-      const emerging = d.filter(item => item.alpha > 0)
-      const [min] = extent(stable, item => item.value)
-      const [, max] = extent(emerging, item => item.value)
-      const safeMin = Number.isFinite(min) ? Number(min) : 0
-      const safeMax = Number.isFinite(max) ? Number(max) : 0
-      frameMinValues[i] = safeMin
-      frameMaxValues[i] = safeMax
-      // frameValueScales 在下方平滑 + adaptive 参考尺度就绪后统一构建（见 137 行附近），此处只收集 min/max。
-      frameIdSets[i] = new InternSet(d.map(item => item.id))
-      let maxStep: number | undefined
-      for (const item of d) {
-        if (item.alpha <= 0) {
-          continue
-        }
-        if (maxStep === undefined || item.step > maxStep) {
-          maxStep = item.step
-        }
-      }
-      frameMaxSteps[i] = maxStep
-    }
-
-    const smoothingRadius = Math.max(0, Math.floor(config.valueScaleSmoothing))
-    let smoothedMinValues = [...frameMinValues]
-    let smoothedMaxValues = [...frameMaxValues]
-    if (smoothingRadius > 0 && data.length > 1) {
-      // blur 会原地修改入参数组，传副本以保留 frameMin/MaxValues 的真实极值（domain 上界兜底要用真实 max）。
-      smoothedMinValues = [...blur([...frameMinValues], smoothingRadius) as Float64Array]
-      smoothedMaxValues = [...blur([...frameMaxValues], smoothingRadius) as Float64Array]
-      for (let i = 0; i < data.length; i += 1) {
-        if (Number.isNaN(smoothedMinValues[i])) {
-          smoothedMinValues[i] = frameMinValues[i] ?? 0
-        }
-        if (Number.isNaN(smoothedMaxValues[i])) {
-          smoothedMaxValues[i] = frameMaxValues[i] ?? 0
-        }
-      }
-    }
-    // adaptive 参考尺度：屏内首尾差距的中位数，作为软饱和半衰尺度（与 DataProcessor.buildBaselineScale 同步）。
-    const spans: number[] = []
-    for (let i = 0; i < data.length; i += 1) {
-      const s = (smoothedMaxValues[i] ?? 0) - (smoothedMinValues[i] ?? 0)
-      if (s > 0) {
-        spans.push(s)
-      }
-    }
-    this.referenceSpan = median(spans) ?? 1
-    const adaptiveOptions = {
-      referenceSpan: this.referenceSpan,
-      minRatio: config.valueScaleMinRatio,
-      maxRatio: config.valueScaleMaxRatio,
-    }
-    for (let i = 0; i < data.length; i += 1) {
-      const minValue = smoothedMinValues[i] ?? frameMinValues[i] ?? 0
-      // domain 上界不低于当前帧真实 max：平滑滞后会把上升中的榜首 clamp，使柱长对应的刻度 < 数值标签。
-      const maxValue = Math.max(smoothedMaxValues[i] ?? 0, frameMaxValues[i] ?? 0)
-      frameValueScales[i] = getValueScale(config.valueScaleType, minValue, maxValue, config.valueScaleDelta, adaptiveOptions)
-    }
-
-    const ticksAlphaMap = new Map<number, Array<number>>()
-    const ticksComponentMap = new Map<number, Container>()
-    const tickSet = new InternSet<number>()
-
-    for (const [i] of data.entries()) {
-      const scale = frameValueScales[i]
-      const ticks = scale.ticks(config.tickNum)
-      for (const tick of ticks) {
-        if (tickSet.has(tick)) {
-          const numberList = ticksAlphaMap.get(tick)!
-          numberList[i] = 1
-        }
-        else {
-          tickSet.add(tick)
-          const numberList = Array.from<number>({ length: data.length }).fill(0)
-          numberList[i] = 1
-          ticksAlphaMap.set(tick, numberList)
-          const tickText = new Text({
-            text: tick.toString(),
-            style: {
-              fontSize: config.tickLabelFontSize,
-              fill: 0xAA_AA_AA,
-              fontFamily: config.fontFamily,
-            },
-          })
-
-          const tickLine = new Graphics()
-          const tickComp = new Container({
-            children: [
-              tickText,
-              tickLine,
-            ],
-          })
-          tickLine.setStrokeStyle({
-            width: 1,
-            color: 0x33_33_33,
-          })
-
-          const tickBounds = tickText.getBounds()
-          const tickWidth = tickBounds.width
-
-          const tickLabelHeight = tickBounds.height
-          this.tickLabelHeight = tickLabelHeight
-          tickLine.moveTo(tickWidth / 2, this.tickLabelHeight)
-          tickLine.lineTo(tickWidth / 2, config.height - xAxisLabelHeight - xAxisLabelPaddingUsed)
-          tickLine.stroke()
-
-          tickComp.position.set(-tickWidth / 2, 0)
-          ticksComponentMap.set(tick, tickComp)
-          this.xAxisTickContainer.addChild(tickComp)
-          this.tickWidthMap.set(tick, tickWidth)
-        }
-      }
-    }
+    const { ticksAlphaMap, ticksComponentMap } = this.buildTickComponents(data, config, frameValueScales, xAxisLabelHeight, xAxisLabelPaddingUsed)
 
     const showTitle = Boolean(config.title?.trim())
     const titleLabel = new Text({
@@ -288,12 +162,7 @@ export class BarChart extends Container {
     titleLabel.visible = showTitle
     titleLabel.renderable = showTitle
 
-    const swapFrames = config.swapDurationSec * config.fps
-    // 对 ticksAlpha 的每一个 value 执行 blur
-    for (const [tick, alphaList] of ticksAlphaMap.entries()) {
-      const blurAlphaList = blur(alphaList, swapFrames / 6) as number[]
-      ticksAlphaMap.set(tick, blurAlphaList)
-    }
+    smoothTicksAlpha(ticksAlphaMap, config)
     this.ticksComponentMap = ticksComponentMap
     this.ticksAlphaMap = ticksAlphaMap
 
@@ -331,6 +200,142 @@ export class BarChart extends Container {
     else {
       stepLabel.renderable = false
     }
+  }
+
+  // 预计算每帧值域 scale / id 集合 / 最大 step，以及 adaptive 的参考尺度（屏内首尾差中位数）。
+  // 下界 min 只看稳定 bar (alpha>=1)、上界 max 看渐入 bar (alpha>0)，避免入场/出场过渡造成 domain 阶跃；
+  // 平滑只用来让值域变化更顺，最终 domain 仍包住当帧真实 max（否则上升中的榜首会被 clamp）。
+  private buildFrameScales(data: RankedData[][], config: Config) {
+    const frameValueScales: ScaleLinear<number, number>[] = []
+    const frameIdSets: InternSet<string>[] = []
+    const frameMaxSteps: Array<number | undefined> = []
+    const frameMinValues: number[] = []
+    const frameMaxValues: number[] = []
+
+    for (const [i, d] of data.entries()) {
+      const stable = d.filter(item => item.alpha >= 1)
+      const emerging = d.filter(item => item.alpha > 0)
+      const [min] = extent(stable, item => item.value)
+      const [, max] = extent(emerging, item => item.value)
+      const safeMin = Number.isFinite(min) ? Number(min) : 0
+      const safeMax = Number.isFinite(max) ? Number(max) : 0
+      frameMinValues[i] = safeMin
+      frameMaxValues[i] = safeMax
+      frameIdSets[i] = new InternSet(d.map(item => item.id))
+      let maxStep: number | undefined
+      for (const item of d) {
+        if (item.alpha <= 0) {
+          continue
+        }
+        if (maxStep === undefined || item.step > maxStep) {
+          maxStep = item.step
+        }
+      }
+      frameMaxSteps[i] = maxStep
+    }
+
+    const smoothingRadius = Math.max(0, Math.floor(config.valueScaleSmoothing))
+    let smoothedMinValues = [...frameMinValues]
+    let smoothedMaxValues = [...frameMaxValues]
+    if (smoothingRadius > 0 && data.length > 1) {
+      // blur 会原地修改入参数组，传副本以保留 frameMin/MaxValues 的真实极值（domain 上界兜底要用真实 max）。
+      smoothedMinValues = [...blur([...frameMinValues], smoothingRadius) as Float64Array]
+      smoothedMaxValues = [...blur([...frameMaxValues], smoothingRadius) as Float64Array]
+      for (let i = 0; i < data.length; i += 1) {
+        if (Number.isNaN(smoothedMinValues[i])) {
+          smoothedMinValues[i] = frameMinValues[i] ?? 0
+        }
+        if (Number.isNaN(smoothedMaxValues[i])) {
+          smoothedMaxValues[i] = frameMaxValues[i] ?? 0
+        }
+      }
+    }
+    // adaptive 参考尺度：屏内首尾差距的中位数（与 DataProcessor.buildBaselineScale 共用 computeReferenceSpan）。
+    const spans: number[] = []
+    for (let i = 0; i < data.length; i += 1) {
+      spans.push((smoothedMaxValues[i] ?? 0) - (smoothedMinValues[i] ?? 0))
+    }
+    const referenceSpan = computeReferenceSpan(spans)
+    const adaptiveOptions = {
+      referenceSpan,
+      minRatio: config.valueScaleMinRatio,
+      maxRatio: config.valueScaleMaxRatio,
+    }
+    for (let i = 0; i < data.length; i += 1) {
+      const minValue = smoothedMinValues[i] ?? frameMinValues[i] ?? 0
+      // domain 上界不低于当前帧真实 max：平滑滞后会把上升中的榜首 clamp，使柱长对应的刻度 < 数值标签。
+      const maxValue = Math.max(smoothedMaxValues[i] ?? 0, frameMaxValues[i] ?? 0)
+      frameValueScales[i] = getValueScale(config.valueScaleType, minValue, maxValue, config.valueScaleDelta, adaptiveOptions)
+    }
+
+    return { frameValueScales, frameIdSets, frameMaxSteps, referenceSpan }
+  }
+
+  // 构建刻度组件（文字 + 引导线）与每帧 alpha 序列；副作用：写入 tickLabelHeight / tickWidthMap，
+  // 并把刻度容器挂到 xAxisTickContainer。
+  private buildTickComponents(
+    data: RankedData[][],
+    config: Config,
+    frameValueScales: ScaleLinear<number, number>[],
+    xAxisLabelHeight: number,
+    xAxisLabelPaddingUsed: number,
+  ) {
+    const ticksAlphaMap = new Map<number, Array<number>>()
+    const ticksComponentMap = new Map<number, Container>()
+    const tickSet = new InternSet<number>()
+
+    for (const [i] of data.entries()) {
+      const scale = frameValueScales[i]
+      const ticks = scale.ticks(config.tickNum)
+      for (const tick of ticks) {
+        if (tickSet.has(tick)) {
+          const numberList = ticksAlphaMap.get(tick)!
+          numberList[i] = 1
+        }
+        else {
+          tickSet.add(tick)
+          const numberList = Array.from<number>({ length: data.length }).fill(0)
+          numberList[i] = 1
+          ticksAlphaMap.set(tick, numberList)
+          const tickText = new Text({
+            text: tick.toString(),
+            style: {
+              fontSize: config.tickLabelFontSize,
+              fill: MUTED_LABEL_COLOR,
+              fontFamily: config.fontFamily,
+            },
+          })
+
+          const tickLine = new Graphics()
+          const tickComp = new Container({
+            children: [
+              tickText,
+              tickLine,
+            ],
+          })
+          tickLine.setStrokeStyle({
+            width: 1,
+            color: TICK_LINE_COLOR,
+          })
+
+          const tickBounds = tickText.getBounds()
+          const tickWidth = tickBounds.width
+
+          const tickLabelHeight = tickBounds.height
+          this.tickLabelHeight = tickLabelHeight
+          tickLine.moveTo(tickWidth / 2, this.tickLabelHeight)
+          tickLine.lineTo(tickWidth / 2, config.height - xAxisLabelHeight - xAxisLabelPaddingUsed)
+          tickLine.stroke()
+
+          tickComp.position.set(-tickWidth / 2, 0)
+          ticksComponentMap.set(tick, tickComp)
+          this.xAxisTickContainer.addChild(tickComp)
+          this.tickWidthMap.set(tick, tickWidth)
+        }
+      }
+    }
+
+    return { ticksAlphaMap, ticksComponentMap }
   }
 
   private getMaxLabelWidth(labels: string[], config: Config) {

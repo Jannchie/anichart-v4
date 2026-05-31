@@ -3,10 +3,9 @@ import type { Config } from './Config'
 import type { RankedData } from './Data'
 import { blur, extent, InternSet, scaleLinear } from 'd3'
 import { Container, Graphics, Text } from 'pixi.js'
+import { MUTED_LABEL_COLOR, smoothTicksAlpha, TICK_LINE_COLOR, TITLE_FONT_SIZE, TITLE_PADDING } from './utils/chartChrome'
 import { measureTextWidth } from './utils/textMetrics'
 
-const TITLE_FONT_SIZE = 36
-const TITLE_PADDING = 24
 const DEFAULT_X_AXIS_TICK_HEIGHT = 32
 
 interface SeriesPoint {
@@ -263,7 +262,7 @@ export class LineChart extends Container {
       text: config.xAxisLabel,
       style: {
         fontSize: 32,
-        fill: 0xAA_AA_AA,
+        fill: MUTED_LABEL_COLOR,
         fontFamily: config.fontFamily,
       },
     })
@@ -290,7 +289,7 @@ export class LineChart extends Container {
 
     const xTickStyle = {
       fontSize: config.tickLabelFontSize,
-      fill: 0xAA_AA_AA,
+      fill: MUTED_LABEL_COLOR,
       fontFamily: config.fontFamily,
     }
     this.startTickLabel = new Text({ style: xTickStyle })
@@ -585,7 +584,7 @@ export class LineChart extends Container {
           text: tick.toString(),
           style: {
             fontSize: this.config.tickLabelFontSize,
-            fill: 0xAA_AA_AA,
+            fill: MUTED_LABEL_COLOR,
             fontFamily: this.config.fontFamily,
           },
         })
@@ -593,7 +592,7 @@ export class LineChart extends Container {
         const tickLine = new Graphics()
         tickLine.setStrokeStyle({
           width: 1,
-          color: 0x33_33_33,
+          color: TICK_LINE_COLOR,
           alpha: 0.4,
         })
 
@@ -613,11 +612,7 @@ export class LineChart extends Container {
   }
 
   private applyTickSmoothing() {
-    const swapFrames = this.config.swapDurationSec * this.config.fps
-    for (const [tick, alphaList] of this.ticksAlphaMap.entries()) {
-      const blurred = blur(alphaList, swapFrames / 6) as number[]
-      this.ticksAlphaMap.set(tick, blurred)
-    }
+    smoothTicksAlpha(this.ticksAlphaMap, this.config)
   }
 
   private populateSeries() {
@@ -658,7 +653,7 @@ export class LineChart extends Container {
       graphics.clear()
       graphics.setStrokeStyle({
         width: 1,
-        color: 0x33_33_33,
+        color: TICK_LINE_COLOR,
         alpha: 0.4,
       })
       graphics.moveTo(0, 0)
