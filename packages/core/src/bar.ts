@@ -4,6 +4,9 @@ import { getExtraValueLabelFontSize, getValueLabelFontSize } from './utils/label
 
 export const EXTRA_VALUE_LABEL_PADDING = 8
 
+// reverse 模式下图片相对柱高的缩放，留出与文字并排的视觉余量。
+const REVERSE_IMAGE_SCALE = 0.7
+
 interface BarItemSettings {
   x: number
   y: number
@@ -163,7 +166,6 @@ export class BarComponent extends Container {
     const image = this.settings.image
     if (image) {
       const aspectRatio = image.width / image.height
-      const scale = 0.7
       switch (this.settings.barInfoStyle) {
         case 'default': {
           image.height = this.settings.height
@@ -171,9 +173,8 @@ export class BarComponent extends Container {
           break
         }
         case 'reverse': {
-          // TODO: 0.8 is a magic scale number
-          image.height = this.settings.height * scale
-          image.width = this.settings.height * aspectRatio * scale
+          image.height = this.settings.height * REVERSE_IMAGE_SCALE
+          image.width = this.settings.height * aspectRatio * REVERSE_IMAGE_SCALE
         }
       }
       barInfoContainer.position.set(width - barInfoText.width - image.width - barInfoPadding, 0)
@@ -275,7 +276,6 @@ export class BarComponent extends Container {
     this.valueLabel.text = valueLabel
     this.valueLabel.position.set(width + valueLabelPadding, height / 2)
     this.extraValueLabel.text = this.settings.extraValueLabel ?? ''
-    // TODO: 20 is a magic padding number
     this.extraValueLabel.position.set(this.valueLabel.x + this.valueLabel.width + EXTRA_VALUE_LABEL_PADDING, height / 2)
     this.position.set(x, y)
     this.alpha = this.settings.alpha

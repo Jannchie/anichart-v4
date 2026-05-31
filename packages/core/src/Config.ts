@@ -108,11 +108,14 @@ export interface ConfigInput {
 
 // step 列默认解析：数字原样，否则按日期解析为毫秒时间戳。
 function parseStepValue(raw: any): number {
-  if (!Number.isNaN(Number(raw))) {
-    return Number(raw)
+  const numeric = Number(raw)
+  if (!Number.isNaN(numeric)) {
+    return numeric
   }
-  if (new Date(raw).toString() !== 'Invalid Date') {
-    return dayjs(raw).valueOf()
+  // 单次解析：getTime() 等价于原 dayjs(raw).valueOf()，避免重复构造 Date。
+  const date = new Date(raw)
+  if (date.toString() !== 'Invalid Date') {
+    return date.getTime()
   }
   throw new Error(`step is not a valid date or number: get ${raw}`)
 }
