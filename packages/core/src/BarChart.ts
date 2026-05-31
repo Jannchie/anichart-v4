@@ -90,7 +90,7 @@ export class BarChart extends Container {
       const safeMax = Number.isFinite(max) ? Number(max) : 0
       frameMinValues[i] = safeMin
       frameMaxValues[i] = safeMax
-      frameValueScales[i] = getValueScale(config.valueScaleType, safeMin, safeMax, config.valueScaleDelta)
+      // frameValueScales 在下方平滑 + adaptive 参考尺度就绪后统一构建（见 137 行附近），此处只收集 min/max。
       frameIdSets[i] = new InternSet(d.map(item => item.id))
       let maxStep: number | undefined
       for (const item of d) {
@@ -395,9 +395,6 @@ export class BarChart extends Container {
         }
         const ratio = Math.max(0, Math.min(scale(item.value), 1))
         if (ratio <= 0) {
-          if (totalWidth > totalAvailable) {
-            continue
-          }
           continue
         }
         const required = (totalWidth - totalAvailable * (1 - ratio)) / ratio

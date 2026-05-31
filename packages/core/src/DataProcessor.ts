@@ -1,4 +1,3 @@
-/* eslint-disable no-console */
 import type { DSVRowArray } from 'd3'
 import type { Config, SwapAlgorithmName } from './Config'
 import type { Data, RankedData } from './Data'
@@ -40,9 +39,7 @@ export class DataProcessor {
   }
 
   static processRows(rawData: DSVRowArray<string>, config: Config): RankedData[][] {
-    console.time('process')
     const data = DataProcessor.preprocess(rawData, config)
-    console.timeEnd('process')
     const rawStepList = [...new InternSet(data.map(d => d.step))]
     const [startStep, endStep] = extent(rawStepList)
     if (typeof startStep !== 'number' || typeof endStep !== 'number') {
@@ -53,18 +50,12 @@ export class DataProcessor {
     const totalFrame = Math.max(1, Math.round(totalSec * config.fps))
     const stepSec = totalStep > 0 ? totalSec / totalStep : totalSec
     const maxTransitionDuration = config.maxRetentionTimeSec / 2
+    // transitionDurationSec 受 maxRetentionTimeSec/2 上限约束：超出时静默 clamp（避免 fade 区间吞掉整个保留窗）。
     const transitionDurationSec = Math.min(config.transitionDurationSec, maxTransitionDuration)
-    if (transitionDurationSec !== config.transitionDurationSec) {
-      console.warn('transitionDurationSec * 2 > maxRetentionTimeSec, using maxRetentionTimeSec / 2 instead')
-    }
     const transitionSteps = stepSec > 0 ? transitionDurationSec / stepSec : 0
 
-    console.time('samplers')
     const samplers = DataProcessor.buildSamplers(data, config, stepSec)
-    console.timeEnd('samplers')
-    console.time('baseline')
     const baselineScale = DataProcessor.buildBaselineScale(data, config)
-    console.timeEnd('baseline')
 
     // carry-forward 保留窗口：与 buildSamplers 的段内 gap 容忍度对称，
     // 取 maxRetentionTimeSec。一个 id 最后一次出现后，在此窗口内继续以 lastValue 留在榜上，
@@ -85,9 +76,7 @@ export class DataProcessor {
     else {
       stepList = Array.from<number>({ length: totalFrame }).fill(startStep)
     }
-    console.time('fillRank')
     const result = DataProcessor.fillRank(stepList, samplers, baselineScale, transitionSteps, carrySteps, config)
-    console.timeEnd('fillRank')
     DataProcessor.addTailingFrames(config, result)
     return result
   }
@@ -387,21 +376,26 @@ export class DataProcessor {
     // eslint-disable-next-line ts/no-use-before-define
     const algo = SWAP_ALGORITHMS[config.swapAlgorithm]
     algo(config, result)
-    DataProcessor.computeUpFlags(result)
   }
 
   // velocity-controlled rank trajectory（"arrive" 减速曲线 + boundary-driven alpha）：
   //   target = d.rank（fillRank 给出：屏内 unique 0..topN-1，屏外统一 topN 停车位）。每根 bar 始终朝自己的
   //     真实 dataRank 移动——不做"身位让位 / 吸附 round(vrPrev)"修正：那样在身位内没有紧邻倒置对手时
   //     会把 bar 钉死在错误名次，y 位置与 value 名次脱节（这是被移除的旧 proximity 方案的核心缺陷）。
-  //   desired = sign(dist) × max(minVel, √(2·maxAccel·|dist|))
-  //     √(2·maxAccel·|dist|) 是"以 maxAccel 匀减速恰好停在 target"的速度：距离越大越快，所以暴涨 / 暴跌的 bar
+  //   desired = sign(dist) × max(minVel, √(2·aEff·|dist|))
+  //     √(2·aEff·|dist|) 是"以 aEff 匀减速恰好停在 target"的速度：距离越大越快，所以暴涨 / 暴跌的 bar
   //     一次跨多名次也能全速追上，不会被固定速度上限拖成长期错位；minVel 兜住末段、保证 ~swapDurationSec 内及时到位
   //     （指数趋近 / 弹簧类模型缺这一项，会拖出长尾导致名次顺序迟迟不就位，实测错位帧数翻倍）。
-  //   v 每帧最多变化 maxDv（限制 jerk），位移 = v·dt；越过 target 或贴住且低速 → 吸附整数（收敛 + 防漂移）。
+  //   v 每帧最多变化 aEff·dt（限制 jerk），位移 = v·dt；越过 target 或贴住且低速 → 吸附整数（收敛 + 防漂移）。
   //   alpha = min(sampleAlpha, clamp(topN - blurRank, 0, 1))：blurRank≤topN-1 → 1；=topN → 0；boundary 线性过渡。
-  // 通过 SWAP_ALGORITHMS 派发，不要直接调用。
-  static applyVelocity(config: Config, result: RankedData[][]) {
+  //
+  // 距离自适应加速度（boost 参数）：aEff = maxAccel·(1 + boost·max(0,|dist|−1))。
+  //   boost=0 → aEff≡maxAccel，纯反馈速度模型（applyVelocity）；
+  //   boost>0 → |dist|>1 时加速度变大、到达时间从线性压成次线性 → 压缩 blurRank 滞后 value-rank 的逆序时间
+  //     （applyVelocityAccel）；|dist|≤1 的普通 1-rank 交换 aEff 不变 → 惯性观感与 velocity 完全一致。
+  //   刻意不引入 softRank/前馈：前馈的 d(softRank)/dt 含 ε 抖动噪声，被 /dt 放大后会推动「无关柱」原地
+  //     上下抽搐（实测方向反转数 20×），故弃用——boost 单独即可压逆序且零抽搐、运动全程平滑。
+  private static runVelocity(config: Config, result: RankedData[][], boost: number) {
     const T = result.length
     if (T === 0 || result[0].length === 0) {
       return
@@ -413,7 +407,6 @@ export class DataProcessor {
     // 1-rank 实际耗时 ≈ 0.35·D（非 D 本身）；D 是相对节奏标度而非绝对秒数。
     const maxAccel = 32 / (D * D)
     const minVel = 2 / D
-    const maxDv = maxAccel * dt
     const topN = config.topN
 
     const visualRank = new Map<string, number>()
@@ -446,82 +439,9 @@ export class DataProcessor {
 
         const vrPrev = visualRank.get(d.id)!
         const target = d.rank
-        const distance = target - vrPrev
-        const absDist = Math.abs(distance)
-
-        const desired = absDist < 1e-9
-          ? 0
-          : Math.sign(distance) * Math.max(minVel, Math.sqrt(2 * maxAccel * absDist))
-
-        let v = velocity.get(d.id)!
-        v += Math.max(-maxDv, Math.min(maxDv, desired - v))
-        let vr = vrPrev + v * dt
-
-        // 越过 target，或已贴住且速度低于 minVel → 吸附整数停住。
-        const overshot = (distance > 0 && vr > target) || (distance < 0 && vr < target)
-        if (overshot || (Math.abs(target - vr) < 1e-4 && Math.abs(v) < minVel)) {
-          vr = target
-          v = 0
-        }
-
-        visualRank.set(d.id, vr)
-        velocity.set(d.id, v)
-        d.blurRank = vr
-        writeAlpha(d)
-      }
-    }
-  }
-
-  // velocity-accel：velocity 的纯反馈速度模型 + 距离自适应加速度。唯一改动是把固定加速度 a 换成
-  //   a_eff = a·(1 + swapAccelBoost·max(0,|dist|−1))：
-  //     |dist|≤1 的普通 1-rank 交换 a 原样不变 → 惯性观感、稳态等距槽与 velocity 完全一致；
-  //     暴涨穿多级（|dist| 大）时加速度变大、到达时间从线性压成次线性 → 压缩 blurRank 滞后 value-rank
-  //     的逆序时间。swapAccelBoost=0 严格退化为 velocity。
-  // 刻意不引入 softRank/前馈：前馈的 d(softRank)/dt 含 ε 抖动噪声，被 /dt 放大后会推动「无关柱」原地
-  //   上下抽搐（实测方向反转数 20×），故弃用——boost 单独即可压逆序且零抽搐、运动全程平滑。
-  // 通过 SWAP_ALGORITHMS 派发。
-  static applyVelocityAccel(config: Config, result: RankedData[][]) {
-    const T = result.length
-    if (T === 0 || result[0].length === 0) {
-      return
-    }
-    const dt = 1 / config.fps
-    const D = Math.max(1e-6, config.swapDurationSec)
-    const maxAccel = 32 / (D * D)
-    const minVel = 2 / D
-    const topN = config.topN
-    const boost = config.swapAccelBoost
-
-    const visualRank = new Map<string, number>()
-    const velocity = new Map<string, number>()
-
-    const writeAlpha = (d: RankedData) => {
-      const parkingMask = Math.max(0, Math.min(1, topN - d.blurRank))
-      d.alpha = Math.min(d.alpha, parkingMask)
-    }
-
-    const seed = (d: RankedData) => {
-      visualRank.set(d.id, d.rank)
-      velocity.set(d.id, 0)
-      d.blurRank = d.rank
-      writeAlpha(d)
-    }
-
-    for (const d of result[0]) {
-      seed(d)
-    }
-
-    for (let t = 1; t < T; t++) {
-      for (const d of result[t]) {
-        if (!visualRank.has(d.id)) {
-          seed(d)
-          continue
-        }
-        const vrPrev = visualRank.get(d.id)!
-        const target = d.rank
         const dist = target - vrPrev
         const absDist = Math.abs(dist)
-        // 距离自适应加速度：dist 越大加速度越大，暴涨柱更快收敛；dist≤1 时 aEff=maxAccel（不变）。
+        // 距离自适应加速度：dist 越大加速度越大，暴涨柱更快收敛；dist≤1 或 boost=0 时 aEff=maxAccel（不变）。
         const aEff = maxAccel * (1 + boost * Math.max(0, absDist - 1))
         const maxDv = aEff * dt
         const desired = absDist < 1e-9
@@ -532,7 +452,7 @@ export class DataProcessor {
         v += Math.max(-maxDv, Math.min(maxDv, desired - v))
         let vr = vrPrev + v * dt
 
-        // 越过 target，或已贴住且低速 → 吸附停住（收敛 + 防漂移）。
+        // 越过 target，或已贴住且速度低于 minVel → 吸附整数停住（收敛 + 防漂移）。
         const overshot = (dist > 0 && vr > target) || (dist < 0 && vr < target)
         if (overshot || (Math.abs(target - vr) < 1e-4 && Math.abs(v) < minVel)) {
           vr = target
@@ -547,18 +467,16 @@ export class DataProcessor {
     }
   }
 
-  // up 状态用 blurRank 帧间变化判定。仅在接近整数 rank 时更新，避免过渡中翻转。
-  private static computeUpFlags(result: RankedData[][]) {
-    const byID = group(result.flat(), d => d.id)
-    for (const records of byID.values()) {
-      records.sort((a, b) => a.step - b.step)
-      for (let i = 1; i < records.length; i++) {
-        const cur = records[i].blurRank
-        const prev = records[i - 1].blurRank
-        const isNearInteger = Math.abs(cur - Math.round(cur)) < 0.05
-        records[i].up = isNearInteger ? cur < prev : (records[i - 1]?.up ?? false)
-      }
-    }
+  // 纯反馈速度模型：blurRank 用「匀减速恰好停在 target」追踪离散 target rank（boost=0）。
+  // 通过 SWAP_ALGORITHMS 派发，不要直接调用。
+  static applyVelocity(config: Config, result: RankedData[][]) {
+    DataProcessor.runVelocity(config, result, 0)
+  }
+
+  // velocity + 距离自适应加速度：暴涨穿多级时加速度变大、更快收敛、压缩逆序时间，普通 1-rank 交换与
+  // velocity 一致。swapAccelBoost=0 严格退化为 velocity。通过 SWAP_ALGORITHMS 派发，不要直接调用。
+  static applyVelocityAccel(config: Config, result: RankedData[][]) {
+    DataProcessor.runVelocity(config, result, config.swapAccelBoost)
   }
 
   private static preprocess(rawData: DSVRowArray<string>, config: Config) {
