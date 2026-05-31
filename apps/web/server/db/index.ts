@@ -8,11 +8,12 @@ let _db: ReturnType<typeof drizzle<typeof schema>> | undefined
 export function useDb() {
   if (!_db) {
     const url = useRuntimeConfig().databaseUrl
-    if (!url)
+    if (!url) {
       throw new Error('DATABASE_URL 未配置')
+    }
     _db = drizzle(postgres(url), { schema })
   }
   return _db
 }
 
-export { schema }
+export * as schema from './schema'
