@@ -27,6 +27,9 @@ interface SampleResult {
 
 type BaselineFn = (step: number) => number
 
+// 距离自适应加速度的半饱和距离：|dist| 比目标多这么多名次时，额外加速度达到上限增量的一半。
+const ACCEL_DIST_HALF = 2
+
 function easeInOutCubic(x: number): number {
   return x < 0.5 ? 4 * x * x * x : 1 - ((-2 * x + 2) ** 3) / 2
 }
@@ -389,10 +392,13 @@ export class DataProcessor {
   //   v 每帧最多变化 aEff·dt（限制 jerk），位移 = v·dt；越过 target 或贴住且低速 → 吸附整数（收敛 + 防漂移）。
   //   alpha = min(sampleAlpha, clamp(topN - blurRank, 0, 1))：blurRank≤topN-1 → 1；=topN → 0；boundary 线性过渡。
   //
-  // 距离自适应加速度（boost 参数）：aEff = maxAccel·(1 + boost·max(0,|dist|−1))。
+  // 距离自适应加速度（boost 参数，软饱和）：
+  //   aEff = maxAccel·(1 + boost·(1 − 2^(−max(0,|dist|−1)/ACCEL_DIST_HALF)))。
+  //   随 |dist| 平滑上升、渐近到上限 maxAccel·(1+boost)，导数连续、无硬截止——避免暴涨柱跨多名次时
+  //   加速度线性爆炸盖过惯性（boost 由「线性斜率」变为「额外加速度的上限倍数」）。
   //   boost=0 → aEff≡maxAccel，纯反馈速度模型（applyVelocity）；
-  //   boost>0 → |dist|>1 时加速度变大、到达时间从线性压成次线性 → 压缩 blurRank 滞后 value-rank 的逆序时间
-  //     （applyVelocityAccel）；|dist|≤1 的普通 1-rank 交换 aEff 不变 → 惯性观感与 velocity 完全一致。
+  //   boost>0 → |dist|>1 时加速度增大、压缩 blurRank 滞后 value-rank 的逆序时间（applyVelocityAccel）；
+  //     |dist|≤1 的普通 1-rank 交换 aEff 不变 → 惯性观感与 velocity 完全一致。
   //   刻意不引入 softRank/前馈：前馈的 d(softRank)/dt 含 ε 抖动噪声，被 /dt 放大后会推动「无关柱」原地
   //     上下抽搐（实测方向反转数 20×），故弃用——boost 单独即可压逆序且零抽搐、运动全程平滑。
   private static runVelocity(config: Config, result: RankedData[][], boost: number) {
@@ -441,8 +447,9 @@ export class DataProcessor {
         const target = d.rank
         const dist = target - vrPrev
         const absDist = Math.abs(dist)
-        // 距离自适应加速度：dist 越大加速度越大，暴涨柱更快收敛；dist≤1 或 boost=0 时 aEff=maxAccel（不变）。
-        const aEff = maxAccel * (1 + boost * Math.max(0, absDist - 1))
+        // 距离自适应加速度（软饱和）：随 |dist| 平滑上升、渐近到 maxAccel·(1+boost) 上限，不硬截止；
+        // |dist|≤1 或 boost=0 时 aEff=maxAccel（普通 1-rank 交换 / 纯 velocity 不变）。
+        const aEff = maxAccel * (1 + boost * (1 - 2 ** (-Math.max(0, absDist - 1) / ACCEL_DIST_HALF)))
         const maxDv = aEff * dt
         const desired = absDist < 1e-9
           ? 0
