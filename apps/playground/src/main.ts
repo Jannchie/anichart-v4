@@ -1,38 +1,18 @@
-import type { RankedData } from '@anichart/core'
+import type { Config, RankedData } from '@anichart/core'
 import type { DSVRowArray } from 'd3'
-import { BarChart, computeInversionMetrics, Config, DataProcessor, LineChart } from '@anichart/core'
+import { BarChart, computeInversionMetrics, DataProcessor, LineChart } from '@anichart/core'
 import { csv } from 'd3'
-import dayjs from 'dayjs'
 import { Application } from 'pixi.js'
+import { DATASETS } from './datasets'
 import './style.css'
 
 const app = new Application()
-const ratingFormatter = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 })
-const config = new Config({
-  id: 'model',
-  value: 'rating',
-  color: 'company',
-  step: d => Number(d.date) * 1000,
-  getStepLabel: step => dayjs(step).format('YYYY-MM-DD'),
-  getValueLabel: data => ratingFormatter.format(data.value),
-  getValueExtra: data => data.raw.company ?? '',
-  getBarInfo: data => data.raw.model ?? data.id,
-  title: 'LLM Elo Rating Leaderboard',
-})
+
+// 当前数据集 / 配置：切换数据集时重建 config（字段映射、配色、文案随之改变）。
+let activeDataset = DATASETS[0]
+let config: Config = activeDataset.makeConfig()
 
 type ChartInstance = BarChart | LineChart
-const chartPreferences = {
-  bar: {
-    showLabel: false,
-    title: 'LLM Elo Rating Leaderboard',
-    xAxisLabel: '',
-  },
-  line: {
-    showLabel: true,
-    title: 'LLM Elo Rating Trend',
-    xAxisLabel: '',
-  },
-} as const
 
 const SPEED_OPTIONS = [0.25, 0.5, 1, 2, 4] as const
 
@@ -89,6 +69,13 @@ function makeDivider() {
   return divider
 }
 
+const datasetSelect = makeSelect()
+for (const d of DATASETS) {
+  datasetSelect.add(new Option(d.label, d.key))
+}
+datasetSelect.value = activeDataset.key
+datasetSelect.title = '数据集'
+
 const chartSelect = makeSelect()
 chartSelect.add(new Option('Bar', 'bar'))
 chartSelect.add(new Option('Line', 'line'))
@@ -96,7 +83,6 @@ chartSelect.value = 'bar'
 chartSelect.title = '图表类型'
 
 // 加速度强度 boost：0 即纯 velocity，越大暴涨柱越快收敛（软饱和封顶）。始终走 accel，强度全由 boost 控制。
-config.swapAlgorithm = 'velocity-accel'
 const boostSlider = document.createElement('input')
 boostSlider.type = 'range'
 boostSlider.min = '0'
@@ -150,6 +136,7 @@ speedSelect.value = '1'
 speedSelect.title = '播放速率 ([ / ])'
 
 controls.append(
+  datasetSelect,
   chartSelect,
   boostSlider,
   boostLabel,
@@ -269,10 +256,8 @@ function rebuildChart() {
     chart.removeFromParent()
     chart.destroy({ children: true })
   }
-  const preference = chartPreferences[chartType]
-  config.showLabel = preference.showLabel
-  config.title = preference.title
-  config.xAxisLabel = preference.xAxisLabel
+  // 折线图显示分类标签，条形图不显示；标题 / 坐标轴文案由数据集 config 决定。
+  config.showLabel = chartType === 'line'
 
   chart = chartType === 'line'
     ? new LineChart(data, config)
@@ -374,6 +359,14 @@ chartSelect.addEventListener('change', () => {
   rebuildChart()
 })
 
+datasetSelect.addEventListener('change', () => {
+  const next = DATASETS.find(d => d.key === datasetSelect.value)
+  if (!next || next.key === activeDataset.key) {
+    return
+  }
+  loadDataset(next)
+})
+
 timeAxisSelect.addEventListener('change', () => {
   const next = timeAxisSelect.value
   if (next !== 'dynamic' && next !== 'fixed' && next !== 'window') {
@@ -442,13 +435,38 @@ function handleResize() {
   rebuildChart()
 }
 
-let rawRows: DSVRowArray<string> | null = null
+// 原始 CSV 按文件缓存：切回已加载过的数据集 / 调 boost 时不重复下载，只重跑处理。
+const rawRowsCache = new Map<string, DSVRowArray<string>>()
 async function loadData() {
-  // 缓存已解析的 csv：调 boost 时只重跑处理、不重新下载
-  rawRows ??= await csv('/llm.csv')
+  let rawRows = rawRowsCache.get(activeDataset.file)
+  if (!rawRows) {
+    rawRows = await csv(activeDataset.file)
+    rawRowsCache.set(activeDataset.file, rawRows)
+  }
   data = DataProcessor.processRows(rawRows, config)
   const m = computeInversionMetrics(data, { fps: config.fps })
   metricsLabel.textContent = `逆序对×帧 ${m.inversionPairFrames} · 惯性 ${m.smoothnessEnergy.toFixed(0)}`
+}
+
+// 切换数据集：重建 config、按当前画布尺寸布局、重新加载并从首帧播放。
+async function loadDataset(next: typeof activeDataset) {
+  activeDataset = next
+  config = next.makeConfig()
+  boostSlider.value = config.swapAccelBoost.toString()
+  boostLabel.textContent = `boost ${config.swapAccelBoost.toFixed(1)}`
+  timeAxisSelect.value = config.lineTimeAxisMode
+
+  const { width, height } = getContainerSize()
+  applyConfigSize(width, height)
+
+  await loadData()
+  const maxFrame = Math.max(data.length - 1, 0)
+  progress.max = maxFrame.toString()
+  progress.disabled = data.length === 0
+  currentFrame = 0
+  frameAccumulator = 0
+  rebuildChart()
+  renderFrame(0)
 }
 
 let boostRaf: number | undefined
