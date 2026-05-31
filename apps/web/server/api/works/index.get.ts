@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm'
+import { desc, eq } from 'drizzle-orm'
 import { useDb } from '../../db'
 import { work } from '../../db/schema'
 
@@ -9,6 +9,6 @@ export default defineEventHandler(async () => {
     .select()
     .from(work)
     .where(eq(work.visibility, 'public'))
-    .orderBy(work.createdAt)
+    .orderBy(desc(work.createdAt))
     .limit(50)
 })
