@@ -126,7 +126,7 @@ function defaultColorFor(d: any, colorField: string): number | undefined {
   if (color) {
     return Number.parseInt(color.slice(1), 16)
   }
-  return 1_677_721
+  return 0xFF_FF_FF
 }
 
 export class Config {
