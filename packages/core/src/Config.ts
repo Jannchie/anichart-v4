@@ -81,6 +81,7 @@ export interface ConfigInput {
   swap?: SwapConfig
   line?: LineConfig
   valueScale?: ValueScaleConfig
+  valueSmoothing?: number // 横向 value 时间平滑窗口（秒）：削数据逐点锯齿（如围棋逐局赢跌）造成的「柱长左右抽搐」。0 关闭，默认 0.2
 
   // 柱体布局。
   barGap?: number
@@ -171,6 +172,7 @@ export class Config {
   valueScaleMinRatio: number
   valueScaleMaxRatio: number
   valueScaleSmoothing: number // 从 swapDurationSec 自动派生
+  valueSmoothingRadius: number // 横向 value 时间平滑半径（帧），从 valueSmoothing 秒派生
 
   // ---- 柱体布局 ----
   barGap: number
@@ -257,6 +259,8 @@ export class Config {
     this.valueScaleMaxRatio = (vs.type === 'adaptive' ? vs.maxRatio : undefined) ?? 0.55
     // 平滑窗口从 swapDurationSec 自动派生（与换位节奏对齐），不再单独暴露。
     this.valueScaleSmoothing = Math.max(1, Math.round(this.swapDurationSec * this.fps / 2))
+    // 横向 value 时间平滑半径（帧）：按秒×fps 派生，保证不同 fps 下时间窗一致。0 关闭。
+    this.valueSmoothingRadius = Math.max(0, Math.round((input.valueSmoothing ?? 0.2) * this.fps))
 
     // ---- 柱体布局 ----
     this.barGap = input.barGap ?? 4

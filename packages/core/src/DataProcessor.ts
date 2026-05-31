@@ -1,7 +1,7 @@
 import type { DSVRowArray } from 'd3'
 import type { Config, SwapAlgorithmName } from './Config'
 import type { Data, RankedData } from './Data'
-import { csv, extent, group, InternSet, range, scaleLinear } from 'd3'
+import { blur, csv, extent, group, InternSet, range, scaleLinear } from 'd3'
 import { computeReferenceSpan } from './utils/chartChrome'
 import { adaptiveDomainMin } from './utils/scale'
 
@@ -93,18 +93,47 @@ export class DataProcessor {
     carrySteps: number,
     config: Config,
   ): RankedData[][] {
-    return stepList.map((step) => {
-      const baseline = baselineScale(step)
+    const T = stepList.length
+    const N = samplers.length
+    const baselines = stepList.map(step => baselineScale(step))
+
+    // 第一遍：逐 sampler 采样出整条 value/alpha/raw 序列（按列存），并对每个连续可见段做横向时间平滑。
+    // 平滑必须在排序定 rank 之前：value（→ width）和 rank 都从同一条平滑序列派生，否则会出现
+    // 「柱长被平滑、rank 仍按锯齿原值」的新逆序。围棋逐局赢跌的锯齿正是「刚出现条目左右抽搐」的根因。
+    const valueCols: Float64Array[] = []
+    const alphaCols: Float64Array[] = []
+    const rawCols: any[][] = []
+    const radius = config.valueSmoothingRadius
+    for (const sampler of samplers) {
+      const values = new Float64Array(T)
+      const alphas = new Float64Array(T)
+      const raws: any[] = Array.from({ length: T })
+      for (let t = 0; t < T; t++) {
+        const sampled = DataProcessor.sampleAtStep(sampler, stepList[t], baselines[t], transitionSteps, carrySteps)
+        values[t] = sampled.value
+        alphas[t] = sampled.alpha
+        raws[t] = sampled.raw
+      }
+      if (radius > 0) {
+        DataProcessor.smoothVisibleSegments(values, alphas, radius)
+      }
+      valueCols.push(values)
+      alphaCols.push(alphas)
+      rawCols.push(raws)
+    }
+
+    // 第二遍：逐帧组装 → 按 value desc 排序 → 定 rank。
+    const result: RankedData[][] = []
+    for (let t = 0; t < T; t++) {
       const list: RankedData[] = []
-      for (const sampler of samplers) {
-        const sampled = DataProcessor.sampleAtStep(sampler, step, baseline, transitionSteps, carrySteps)
+      for (let si = 0; si < N; si++) {
         list.push({
-          id: sampler.id,
-          label: sampler.label,
-          value: sampled.value,
-          step,
-          alpha: sampled.alpha,
-          raw: sampled.raw,
+          id: samplers[si].id,
+          label: samplers[si].label,
+          value: valueCols[si][t],
+          step: stepList[t],
+          alpha: alphaCols[si][t],
+          raw: rawCols[si][t],
           up: false,
           rank: 0,
           blurRank: 0,
@@ -118,12 +147,39 @@ export class DataProcessor {
       })
       // rank: 在 topN 内严格按 value-sort（0..topN-1, unique）；超出 topN 的 bar 统一停在 rank=topN
       // （画面外一格的停车位）。alpha 由 applyVelocity 按 in-topN 状态推导。
-      return list.map((d, i) => {
+      for (const [i, d] of list.entries()) {
         d.rank = Math.min(i, config.topN)
         d.blurRank = d.rank
-        return d
-      })
-    })
+      }
+      result.push(list)
+    }
+    return result
+  }
+
+  // 对单个 sampler 的逐帧 value 序列做分段 zero-phase 平滑：仅在连续可见段（alpha>0）内，
+  // 用 d3.blur（三次 box 近似高斯、零相位、不引入延迟）削掉数据逐点锯齿。段间（alpha=0、
+  // value=baseline）隔离，避免把 baseline 拖进可见区污染入场/出场 ramp。段长 < 3 跳过。
+  private static smoothVisibleSegments(values: Float64Array, alphas: Float64Array, radius: number): void {
+    const T = values.length
+    let start = -1
+    const flush = (end: number) => {
+      if (start >= 0 && end - start >= 3) {
+        // subarray 与 values 共享 buffer，blur 原地修改即写回原序列。
+        blur(values.subarray(start, end), radius)
+      }
+      start = -1
+    }
+    for (let t = 0; t < T; t++) {
+      if (alphas[t] > 0) {
+        if (start < 0) {
+          start = t
+        }
+      }
+      else {
+        flush(t)
+      }
+    }
+    flush(T)
   }
 
   // 按 maxRetentionTimeSec 将每个 id 的真实数据点（已剔除 NaN）切成 segments。
