@@ -149,7 +149,7 @@ function onScrub(e: Event) {
 }
 function cycleSpeed() {
   const i = SPEED_OPTIONS.indexOf(speed.value as typeof SPEED_OPTIONS[number])
-  speed.value = SPEED_OPTIONS[(i + 1) % SPEED_OPTIONS.length]
+  speed.value = SPEED_OPTIONS[(i + 1) % SPEED_OPTIONS.length] ?? 1
 }
 
 // 截当前帧为 dataURL，供画廊封面用。

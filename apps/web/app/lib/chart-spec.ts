@@ -81,13 +81,15 @@ export function guessFields(columns: string[]): { id: string, value: string, ste
   if (columns.length === 0) {
     return { id: 'id', value: 'value', step: 'step' }
   }
-  const step = columns.find(c => scoreColumn(c, STEP_HINTS)) ?? columns[columns.length - 1]
+  const step = columns.find(c => scoreColumn(c, STEP_HINTS)) ?? columns[columns.length - 1] ?? 'step'
   const value = columns.find(c => scoreColumn(c, VALUE_HINTS) && c !== step)
     ?? columns.find(c => c !== step)
     ?? columns[0]
+    ?? 'value'
   const id = columns.find(c => scoreColumn(c, ID_HINTS) && c !== step && c !== value)
     ?? columns.find(c => c !== step && c !== value)
     ?? columns[0]
+    ?? 'id'
   return { id, value, step }
 }
 
