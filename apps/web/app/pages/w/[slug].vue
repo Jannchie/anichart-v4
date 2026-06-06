@@ -12,6 +12,11 @@ const copied = ref(false)
 onMounted(async () => {
   try {
     work.value = (await getWorkBySlug(slug)) ?? null
+    // 本地（IndexedDB）没有 → 可能是云端作品链接，交给观看页
+    if (!work.value) {
+      await navigateTo(`/watch/${slug}`, { replace: true })
+      return
+    }
   }
   finally {
     loading.value = false

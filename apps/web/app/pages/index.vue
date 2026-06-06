@@ -1,249 +1,123 @@
 <script setup lang="ts">
-import type { WorkRecord } from '~/lib/store'
-import { defaultSpec } from '~/lib/chart-spec'
-import { listWorks } from '~/lib/store'
+import type { WorksPage } from '~/lib/works-api'
+import { posterUrl } from '~/lib/format'
 
-const works = ref<WorkRecord[]>([])
-const loading = ref(true)
-
-// hero 右侧的实时演示：直接用编辑器同款 ChartCanvas 播放 LLM 示例数据。
-const demoCsv = ref('')
-const demoSpec = {
-  ...defaultSpec(),
-  idField: 'model',
-  valueField: 'rating',
-  stepField: 'date',
-  stepMode: 'seconds' as const,
-  colorField: 'company',
-  topN: 8,
-}
-
-onMounted(async () => {
-  fetch('/samples/sample-llm.csv')
-    .then(r => r.text())
-    .then((t) => { demoCsv.value = t })
-    .catch(() => { /* 演示加载失败时保留骨架占位 */ })
-
-  try {
-    works.value = await listWorks()
-  }
-  finally {
-    loading.value = false
-  }
+// 首页 feed：公开作品网格（YouTube 式）。
+// client-only fetch：SSR 期不连 DB，无后端环境也能渲染壳。
+const { data, pending, error } = useFetch<WorksPage>('/api/works', {
+  server: false,
+  query: { limit: 24 },
 })
 
-// monochrome：模板图标统一中性灰，色彩留给图表内容本身
-const templates = [
-  { key: 'basic', title: '基础示例', desc: 'id · 日期 · 数值，最小可用的条形竞赛', accent: '#666666' },
-  { key: 'llm', title: 'LLM 天梯榜', desc: '按公司分色的大模型 Elo 排名变化', accent: '#666666' },
-]
+const items = ref<WorksPage['items']>([])
+const nextCursor = ref<string | null>(null)
+watch(data, (d) => {
+  if (d) {
+    items.value = d.items
+    nextCursor.value = d.nextCursor
+  }
+}, { immediate: true })
 
-function fmtDate(ts: number) {
-  const d = new Date(ts)
-  return `${d.getFullYear()}/${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getDate().toString().padStart(2, '0')}`
+const loadingMore = ref(false)
+async function loadMore() {
+  if (!nextCursor.value || loadingMore.value)
+    return
+  loadingMore.value = true
+  try {
+    const page = await $fetch<WorksPage>('/api/works', { query: { limit: 24, cursor: nextCursor.value } })
+    items.value.push(...page.items)
+    nextCursor.value = page.nextCursor
+  }
+  finally {
+    loadingMore.value = false
+  }
 }
 </script>
 
 <template>
-  <div>
-    <!-- Hero -->
-    <section class="hero">
-      <div class="container hero-inner">
-        <div class="hero-copy">
-          <span class="badge badge-accent hero-badge">数据可视化 · 在线播放</span>
-          <h1 class="hero-title">
-            把表格，<br>变成会动的故事
-          </h1>
-          <p class="hero-sub">
-            上传一份 CSV，映射字段、调好节奏，立刻得到一张可在线播放、可分享的动态排行榜。无需安装，浏览器里实时渲染。
-          </p>
-          <div class="hero-actions">
-            <NuxtLink to="/editor" class="btn btn-primary btn-lg">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
-                <path d="M12 5v14M5 12h14" />
-              </svg>
-              新建作品
-            </NuxtLink>
-            <NuxtLink to="/editor?sample=llm" class="btn btn-lg">
-              体验示例
-            </NuxtLink>
-          </div>
-        </div>
+  <div class="feed">
+    <!-- 轻量引导条：保留一句产品定位，不挤占 feed -->
+    <div class="promo">
+      <p class="promo-text">
+        把表格变成会动的故事 —— 上传 CSV，几分钟做出可分享的动态图表。
+      </p>
+      <NuxtLink to="/editor" class="btn btn-primary btn-sm">
+        开始创作
+      </NuxtLink>
+    </div>
 
-        <NuxtLink to="/editor?sample=llm" class="hero-demo" title="进编辑器调整这个示例">
-          <ClientOnly>
-            <ChartCanvas v-if="demoCsv" :csv-text="demoCsv" :spec="demoSpec" :controls="false" />
-            <div v-else class="hero-demo-skeleton skeleton" />
-            <template #fallback>
-              <div class="hero-demo-skeleton skeleton" />
-            </template>
-          </ClientOnly>
-          <span class="hero-demo-chip badge">
-            <span class="live-dot" aria-hidden="true" />实时渲染
-          </span>
-        </NuxtLink>
+    <!-- 加载骨架 -->
+    <div v-if="pending" class="grid">
+      <div v-for="i in 8" :key="i" class="sk-card">
+        <div class="skeleton sk-thumb" />
+        <div class="skeleton sk-line" />
+        <div class="skeleton sk-line short" />
       </div>
-    </section>
+    </div>
 
-    <div class="container">
-      <!-- 快速开始模板 -->
-      <section class="block">
-        <div class="block-head">
-          <h2>从模板开始</h2>
-          <span class="dim">挑一个数据集，直接进编辑器调参</span>
-        </div>
-        <div class="tpl-grid">
-          <NuxtLink
-            v-for="t in templates" :key="t.key"
-            :to="`/editor?sample=${t.key}`" class="card tpl"
-          >
-            <span class="tpl-thumb" :style="{ '--c': t.accent }">
-              <svg width="34" height="34" viewBox="0 0 24 24" fill="none">
-                <rect x="3" y="13" width="4" height="8" rx="1" fill="currentColor" opacity="0.45" />
-                <rect x="10" y="8" width="4" height="13" rx="1" fill="currentColor" opacity="0.7" />
-                <rect x="17" y="4" width="4" height="17" rx="1" fill="currentColor" />
-              </svg>
-            </span>
-            <div class="tpl-meta">
-              <strong>{{ t.title }}</strong>
-              <span class="dim">{{ t.desc }}</span>
-            </div>
-            <svg class="tpl-arrow" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M5 12h14M13 6l6 6-6 6" />
-            </svg>
-          </NuxtLink>
-        </div>
-      </section>
+    <!-- 错误（后端未起也落到这里） -->
+    <div v-else-if="error" class="empty card">
+      <strong>加载失败</strong>
+      <p class="dim">拿不到作品列表，请确认服务端在运行后刷新重试。</p>
+    </div>
 
-      <!-- 我的作品 -->
-      <section class="block">
-        <div class="block-head">
-          <h2>我的作品</h2>
-          <NuxtLink v-if="works.length" to="/editor" class="btn btn-sm">
-            新建
-          </NuxtLink>
-        </div>
+    <!-- feed 网格 -->
+    <div v-else-if="items.length" class="grid">
+      <WorkCard
+        v-for="w in items" :key="w.id"
+        :to="`/watch/${w.slug}`"
+        :title="w.title"
+        :poster="posterUrl(w.posterKey, w.updatedAt)"
+        :kind="w.kind"
+        :author-name="w.author.name"
+        :author-id="w.author.id"
+        :views="w.views"
+        :date="w.createdAt"
+      />
+    </div>
 
-        <div v-if="loading" class="gallery">
-          <div v-for="i in 3" :key="i" class="card work-card">
-            <div class="work-thumb skeleton" />
-            <div class="work-meta">
-              <div class="skeleton" style="height: 14px; width: 60%; border-radius: 4px;" />
-            </div>
-          </div>
-        </div>
+    <!-- 空态 -->
+    <div v-else class="empty card">
+      <div class="empty-icon">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 3v18h18" /><path d="M7 14l3-3 3 3 5-6" />
+        </svg>
+      </div>
+      <strong>还没有公开作品</strong>
+      <p class="dim">成为第一个发布动态图表的人。</p>
+      <NuxtLink to="/editor" class="btn btn-primary">
+        开始创作
+      </NuxtLink>
+    </div>
 
-        <div v-else-if="works.length" class="gallery">
-          <NuxtLink
-            v-for="w in works" :key="w.id"
-            :to="`/w/${w.slug}`" class="card work-card"
-          >
-            <div class="work-thumb">
-              <img v-if="w.thumbnail" :src="w.thumbnail" :alt="w.title">
-              <div v-else class="work-thumb-fallback">
-                <svg width="32" height="32" viewBox="0 0 24 24" fill="none">
-                  <rect x="3" y="13" width="4" height="8" rx="1" fill="currentColor" opacity="0.45" />
-                  <rect x="10" y="8" width="4" height="13" rx="1" fill="currentColor" opacity="0.7" />
-                  <rect x="17" y="4" width="4" height="17" rx="1" fill="currentColor" />
-                </svg>
-              </div>
-              <span class="work-kind badge">{{ w.spec.kind === 'line' ? '折线' : '条形' }}</span>
-            </div>
-            <div class="work-meta">
-              <strong class="work-title">{{ w.title || '未命名作品' }}</strong>
-              <span class="dim work-sub">{{ w.rowCount }} 行 · {{ fmtDate(w.updatedAt) }}</span>
-            </div>
-          </NuxtLink>
-        </div>
-
-        <div v-else class="empty card">
-          <div class="empty-icon">
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M3 3v18h18" /><path d="M7 14l3-3 3 3 5-6" />
-            </svg>
-          </div>
-          <strong>还没有作品</strong>
-          <p class="dim">上传一份数据，几分钟做出第一张动态图表。</p>
-          <NuxtLink to="/editor" class="btn btn-primary">
-            开始创作
-          </NuxtLink>
-        </div>
-      </section>
+    <div v-if="nextCursor" class="more">
+      <button class="btn" :disabled="loadingMore" @click="loadMore">
+        {{ loadingMore ? '加载中…' : '加载更多' }}
+      </button>
     </div>
   </div>
 </template>
 
 <style scoped>
-.hero { padding: 56px 0 40px; }
-.hero-inner {
-  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
-  gap: 48px; align-items: center;
-}
-.hero-copy { display: flex; flex-direction: column; align-items: flex-start; }
-.hero-badge { margin-bottom: 18px; }
-.hero-title { font-size: clamp(34px, 4.5vw, 50px); line-height: 1.08; letter-spacing: -0.03em; }
-.hero-sub { margin-top: 18px; max-width: 56ch; font-size: 16px; line-height: 1.65; color: var(--text-2); }
-.hero-actions { margin-top: 28px; display: flex; gap: 12px; flex-wrap: wrap; }
+.feed { padding: 20px 24px 48px; max-width: 1600px; width: 100%; margin: 0 auto; }
 
-/* 实时演示卡片：编辑器同款渲染器，autoplay 循环 */
-.hero-demo {
-  position: relative; display: block; aspect-ratio: 16 / 10;
-  background: #0f1115; border: 1px solid var(--border); border-radius: var(--r-lg);
-  overflow: hidden; box-shadow: var(--shadow-lg);
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
+.promo {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  padding: 12px 16px; margin-bottom: 20px;
+  border: 1px solid var(--border); border-radius: var(--r);
+  background: var(--surface);
 }
-.hero-demo:hover { transform: translateY(-2px); }
-.hero-demo :deep(.canvas-shell) { position: absolute; inset: 0; }
-.hero-demo-skeleton { position: absolute; inset: 0; opacity: 0.12; }
-.hero-demo-chip {
-  position: absolute; top: 10px; right: 10px;
-  background: rgba(20, 20, 24, 0.7); color: #e7e7ea;
-  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-}
-.live-dot {
-  width: 6px; height: 6px; border-radius: 50%; background: #34d399;
-  animation: live-pulse 1.6s ease infinite;
-}
-@keyframes live-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.promo-text { font-size: 13.5px; color: var(--text-2); }
 
-@media (max-width: 960px) {
-  .hero { padding: 40px 0 32px; }
-  .hero-inner { grid-template-columns: 1fr; gap: 28px; }
+.grid {
+  display: grid; gap: 20px 16px;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
 }
 
-.block { padding: 28px 0; }
-.block-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
-.block-head .dim { font-size: 13px; }
-
-.tpl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
-.tpl {
-  display: flex; align-items: center; gap: 14px; padding: 16px;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.1s ease;
-}
-.tpl:hover { border-color: var(--border-strong); box-shadow: var(--shadow-md); transform: translateY(-1px); }
-.tpl-thumb {
-  flex-shrink: 0; width: 52px; height: 52px; border-radius: var(--r);
-  display: flex; align-items: center; justify-content: center;
-  color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent);
-}
-.tpl-meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.tpl-meta strong { font-size: 14.5px; }
-.tpl-meta .dim { font-size: 12.5px; }
-.tpl-arrow { margin-left: auto; color: var(--text-3); flex-shrink: 0; }
-
-.gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(248px, 1fr)); gap: 16px; }
-.work-card { overflow: hidden; transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.1s ease; }
-.work-card:hover { border-color: var(--border-strong); box-shadow: var(--shadow-md); transform: translateY(-2px); }
-.work-thumb {
-  position: relative; aspect-ratio: 16 / 9; background: #0f1115;
-  display: flex; align-items: center; justify-content: center; overflow: hidden;
-}
-.work-thumb img { width: 100%; height: 100%; object-fit: cover; }
-.work-thumb-fallback { color: rgba(255, 255, 255, 0.25); }
-.work-kind { position: absolute; top: 8px; left: 8px; background: rgba(20, 20, 24, 0.7); color: #e7e7ea; backdrop-filter: blur(8px); }
-.work-meta { padding: 12px 14px; display: flex; flex-direction: column; gap: 3px; }
-.work-title { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.work-sub { font-size: 12px; }
+.sk-card { display: flex; flex-direction: column; gap: 8px; }
+.sk-thumb { aspect-ratio: 16 / 9; border-radius: var(--r); }
+.sk-line { height: 13px; border-radius: 4px; width: 85%; }
+.sk-line.short { width: 50%; }
 
 .empty {
   display: flex; flex-direction: column; align-items: center; gap: 10px;
@@ -252,13 +126,15 @@ function fmtDate(ts: number) {
 .empty-icon {
   width: 56px; height: 56px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
-  color: var(--accent); background: var(--accent-soft); margin-bottom: 4px;
+  color: var(--text-2); background: var(--surface-2); margin-bottom: 4px;
 }
 .empty p { max-width: 36ch; margin-bottom: 8px; }
 
+.more { display: flex; justify-content: center; margin-top: 28px; }
+
 @media (max-width: 640px) {
-  .block { padding: 20px 0; }
-  .gallery { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
-  .block-head .dim { display: none; }
+  .feed { padding: 12px 12px 40px; }
+  .grid { grid-template-columns: 1fr; gap: 18px; }
+  .promo { flex-direction: column; align-items: flex-start; }
 }
 </style>
