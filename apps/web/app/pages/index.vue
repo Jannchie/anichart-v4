@@ -1,11 +1,29 @@
 <script setup lang="ts">
 import type { WorkRecord } from '~/lib/store'
+import { defaultSpec } from '~/lib/chart-spec'
 import { listWorks } from '~/lib/store'
 
 const works = ref<WorkRecord[]>([])
 const loading = ref(true)
 
+// hero 右侧的实时演示：直接用编辑器同款 ChartCanvas 播放 LLM 示例数据。
+const demoCsv = ref('')
+const demoSpec = {
+  ...defaultSpec(),
+  idField: 'model',
+  valueField: 'rating',
+  stepField: 'date',
+  stepMode: 'seconds' as const,
+  colorField: 'company',
+  topN: 8,
+}
+
 onMounted(async () => {
+  fetch('/samples/sample-llm.csv')
+    .then(r => r.text())
+    .then((t) => { demoCsv.value = t })
+    .catch(() => { /* 演示加载失败时保留骨架占位 */ })
+
   try {
     works.value = await listWorks()
   }
@@ -30,24 +48,39 @@ function fmtDate(ts: number) {
     <!-- Hero -->
     <section class="hero">
       <div class="container hero-inner">
-        <span class="badge badge-accent hero-badge">数据可视化 · 在线播放</span>
-        <h1 class="hero-title">
-          把表格，<br>变成会动的故事
-        </h1>
-        <p class="hero-sub">
-          上传一份 CSV，映射字段、调好节奏，立刻得到一张可在线播放、可分享的动态排行榜。无需安装，浏览器里实时渲染。
-        </p>
-        <div class="hero-actions">
-          <NuxtLink to="/editor" class="btn btn-primary btn-lg">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
-              <path d="M12 5v14M5 12h14" />
-            </svg>
-            新建作品
-          </NuxtLink>
-          <NuxtLink to="/editor?sample=llm" class="btn btn-lg">
-            体验示例
-          </NuxtLink>
+        <div class="hero-copy">
+          <span class="badge badge-accent hero-badge">数据可视化 · 在线播放</span>
+          <h1 class="hero-title">
+            把表格，<br>变成会动的故事
+          </h1>
+          <p class="hero-sub">
+            上传一份 CSV，映射字段、调好节奏，立刻得到一张可在线播放、可分享的动态排行榜。无需安装，浏览器里实时渲染。
+          </p>
+          <div class="hero-actions">
+            <NuxtLink to="/editor" class="btn btn-primary btn-lg">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+                <path d="M12 5v14M5 12h14" />
+              </svg>
+              新建作品
+            </NuxtLink>
+            <NuxtLink to="/editor?sample=llm" class="btn btn-lg">
+              体验示例
+            </NuxtLink>
+          </div>
         </div>
+
+        <NuxtLink to="/editor?sample=llm" class="hero-demo" title="进编辑器调整这个示例">
+          <ClientOnly>
+            <ChartCanvas v-if="demoCsv" :csv-text="demoCsv" :spec="demoSpec" :controls="false" />
+            <div v-else class="hero-demo-skeleton skeleton" />
+            <template #fallback>
+              <div class="hero-demo-skeleton skeleton" />
+            </template>
+          </ClientOnly>
+          <span class="hero-demo-chip badge">
+            <span class="live-dot" aria-hidden="true" />实时渲染
+          </span>
+        </NuxtLink>
       </div>
     </section>
 
@@ -140,12 +173,42 @@ function fmtDate(ts: number) {
 </template>
 
 <style scoped>
-.hero { padding: 64px 0 40px; }
-.hero-inner { display: flex; flex-direction: column; align-items: flex-start; }
+.hero { padding: 56px 0 40px; }
+.hero-inner {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+  gap: 48px; align-items: center;
+}
+.hero-copy { display: flex; flex-direction: column; align-items: flex-start; }
 .hero-badge { margin-bottom: 18px; }
-.hero-title { font-size: clamp(34px, 6vw, 54px); line-height: 1.08; letter-spacing: -0.03em; }
+.hero-title { font-size: clamp(34px, 4.5vw, 50px); line-height: 1.08; letter-spacing: -0.03em; }
 .hero-sub { margin-top: 18px; max-width: 56ch; font-size: 16px; line-height: 1.65; color: var(--text-2); }
 .hero-actions { margin-top: 28px; display: flex; gap: 12px; flex-wrap: wrap; }
+
+/* 实时演示卡片：编辑器同款渲染器，autoplay 循环 */
+.hero-demo {
+  position: relative; display: block; aspect-ratio: 16 / 10;
+  background: #0f1115; border: 1px solid var(--border); border-radius: var(--r-lg);
+  overflow: hidden; box-shadow: var(--shadow-lg);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.hero-demo:hover { transform: translateY(-2px); }
+.hero-demo :deep(.canvas-shell) { position: absolute; inset: 0; }
+.hero-demo-skeleton { position: absolute; inset: 0; opacity: 0.12; }
+.hero-demo-chip {
+  position: absolute; top: 10px; right: 10px;
+  background: rgba(20, 20, 24, 0.7); color: #e7e7ea;
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+.live-dot {
+  width: 6px; height: 6px; border-radius: 50%; background: #34d399;
+  animation: live-pulse 1.6s ease infinite;
+}
+@keyframes live-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+@media (max-width: 960px) {
+  .hero { padding: 40px 0 32px; }
+  .hero-inner { grid-template-columns: 1fr; gap: 28px; }
+}
 
 .block { padding: 28px 0; }
 .block-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
@@ -160,7 +223,7 @@ function fmtDate(ts: number) {
 .tpl-thumb {
   flex-shrink: 0; width: 52px; height: 52px; border-radius: var(--r);
   display: flex; align-items: center; justify-content: center;
-  color: var(--c); background: color-mix(in srgb, var(--c) 12%, white);
+  color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent);
 }
 .tpl-meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .tpl-meta strong { font-size: 14.5px; }
@@ -191,4 +254,10 @@ function fmtDate(ts: number) {
   color: var(--accent); background: var(--accent-soft); margin-bottom: 4px;
 }
 .empty p { max-width: 36ch; margin-bottom: 8px; }
+
+@media (max-width: 640px) {
+  .block { padding: 20px 0; }
+  .gallery { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+  .block-head .dim { display: none; }
+}
 </style>

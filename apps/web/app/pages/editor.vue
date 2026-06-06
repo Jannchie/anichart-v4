@@ -233,13 +233,12 @@ function reset() {
 
       <aside class="sidebar">
         <!-- 数据 -->
-        <div class="panel">
-          <div class="panel-title">
-            <span>数据</span>
+        <Panel title="数据" :default-open="false">
+          <template #action>
             <button class="btn btn-ghost btn-sm" @click="reset">
               更换
             </button>
-          </div>
+          </template>
           <div class="file-row">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
               <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" />
@@ -258,13 +257,10 @@ function reset() {
               </tbody>
             </table>
           </div>
-        </div>
+        </Panel>
 
         <!-- 字段映射 -->
-        <div class="panel">
-          <div class="panel-title">
-            字段映射
-          </div>
+        <Panel title="字段映射">
           <div class="field">
             <label class="field-label">分类 (id)</label>
             <select v-model="spec.idField" class="select">
@@ -303,13 +299,10 @@ function reset() {
               <option v-for="o in labelOptions" :key="o.value" :value="o.value">{{ o.label }}</option>
             </select>
           </div>
-        </div>
+        </Panel>
 
         <!-- 图表 -->
-        <div class="panel">
-          <div class="panel-title">
-            图表
-          </div>
+        <Panel title="图表">
           <SegmentedControl
             v-model="spec.kind"
             :options="[{ label: '条形竞赛', value: 'bar' }, { label: '折线趋势', value: 'line' }]"
@@ -331,24 +324,18 @@ function reset() {
             <span class="field-label">显示分类标签</span>
             <input v-model="spec.showLabel" type="checkbox" class="switch">
           </label>
-        </div>
+        </Panel>
 
         <!-- 节奏 -->
-        <div class="panel">
-          <div class="panel-title">
-            节奏
-          </div>
+        <Panel title="节奏">
           <RangeField v-model="spec.totalDurationSec" label="总时长" :min="5" :max="120" suffix=" 秒" />
           <RangeField v-model="spec.transitionDurationSec" label="入场/退场过渡" :min="0" :max="10" :step="0.5" suffix=" 秒" />
           <RangeField v-model="spec.swapAccelBoost" label="换位加速度" :min="0" :max="3" :step="0.1" :format="v => v.toFixed(1)" />
           <RangeField v-model="spec.fps" label="帧率 FPS" :min="24" :max="60" :step="6" />
-        </div>
+        </Panel>
 
         <!-- 数值与外观 -->
-        <div class="panel">
-          <div class="panel-title">
-            数值与外观
-          </div>
+        <Panel title="数值与外观">
           <div class="field">
             <label class="field-label">数值刻度</label>
             <select v-model="spec.valueScale" class="select">
@@ -363,7 +350,7 @@ function reset() {
               <input v-model="spec.backgroundColor" class="input" spellcheck="false">
             </div>
           </div>
-        </div>
+        </Panel>
       </aside>
     </div>
   </div>
@@ -409,15 +396,6 @@ function reset() {
   padding: 16px; display: flex; flex-direction: column; gap: 14px;
 }
 
-.panel {
-  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
-  padding: 14px; display: flex; flex-direction: column; gap: 12px;
-}
-.panel-title {
-  display: flex; align-items: center; justify-content: space-between;
-  font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-3);
-}
-
 .file-row {
   display: flex; align-items: center; gap: 8px;
   padding: 9px 11px; background: var(--surface-2); border-radius: var(--r-sm); color: var(--text-2);
@@ -447,7 +425,19 @@ function reset() {
 @media (max-width: 900px) {
   .editor { height: auto; }
   .editor-body { flex-direction: column; }
-  .preview { aspect-ratio: 16 / 9; flex: none; }
+  /* 预览吸顶：往下调参数时图表始终可见 */
+  .preview {
+    aspect-ratio: 16 / 9; flex: none;
+    position: sticky; top: var(--header-h); z-index: 10;
+    box-shadow: var(--shadow-md);
+  }
   .sidebar { width: 100%; border-left: none; border-top: 1px solid var(--border); }
+}
+
+@media (max-width: 640px) {
+  .toolbar { padding: 10px 12px; gap: 8px; }
+  .toolbar .badge { display: none; }
+  .title-input { min-width: 0; }
+  .dropzone { padding: 36px 20px; }
 }
 </style>

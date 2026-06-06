@@ -146,4 +146,11 @@ async function remove() {
   padding: 64px 24px; text-align: center;
 }
 .notfound p { max-width: 38ch; margin-bottom: 8px; }
+
+@media (max-width: 640px) {
+  .detail { padding: 14px 14px 40px; }
+  .detail-title { font-size: 20px; }
+  .info { margin-top: 16px; }
+  .meta-grid { margin-top: 16px; }
+}
 </style>

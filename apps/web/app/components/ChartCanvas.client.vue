@@ -219,21 +219,36 @@ onBeforeUnmount(() => {
     <div ref="wrap" class="canvas-wrap" :style="{ background: spec.backgroundColor }" />
 
     <div v-if="error" class="overlay error">
-      <span>⚠ {{ error }}</span>
+      <div class="error-card">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" /><path d="M12 9v4M12 17h.01" />
+        </svg>
+        <span>{{ error }}</span>
+      </div>
     </div>
     <div v-else-if="!ready" class="overlay">
-      <span class="dim">加载预览…</span>
+      <span class="spinner" aria-hidden="true" />
+      <span class="loading-text">加载预览…</span>
     </div>
 
     <div v-if="controls && ready && !error" class="controls">
       <button class="ico" :title="isPaused ? '播放' : '暂停'" @click="toggle">
-        {{ isPaused ? '▶' : '⏸' }}
+        <svg v-if="isPaused" width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M7 4.5v15a1 1 0 0 0 1.54.84l11.5-7.5a1 1 0 0 0 0-1.68L8.54 3.66A1 1 0 0 0 7 4.5z" />
+        </svg>
+        <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+          <rect x="5.5" y="4" width="4.5" height="16" rx="1.4" /><rect x="14" y="4" width="4.5" height="16" rx="1.4" />
+        </svg>
       </button>
       <button class="ico" title="后退一帧" @click="stepBy(-1)">
-        ◀
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M17.8 5.3a1 1 0 0 0-1.6-.8l-8 6.7a1 1 0 0 0 0 1.6l8 6.7a1 1 0 0 0 1.6-.8z" opacity="0.9" /><rect x="5" y="5" width="2.4" height="14" rx="1" />
+        </svg>
       </button>
       <button class="ico" title="前进一帧" @click="stepBy(1)">
-        ▶
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M6.2 5.3a1 1 0 0 1 1.6-.8l8 6.7a1 1 0 0 1 0 1.6l-8 6.7a1 1 0 0 1-1.6-.8z" opacity="0.9" /><rect x="16.6" y="5" width="2.4" height="14" rx="1" />
+        </svg>
       </button>
       <input
         class="bar" type="range" min="0" :max="totalFrames" :value="currentFrame"
@@ -254,11 +269,27 @@ onBeforeUnmount(() => {
 
 .overlay {
   position: absolute; inset: 0;
-  display: flex; align-items: center; justify-content: center;
+  display: flex; flex-direction: column; gap: 10px;
+  align-items: center; justify-content: center;
   font-size: 13px; pointer-events: none;
 }
-.overlay.error { color: #fca5a5; }
-.overlay .dim { color: rgba(255, 255, 255, 0.5); }
+.loading-text { color: rgba(255, 255, 255, 0.5); }
+.spinner {
+  width: 22px; height: 22px; border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.15);
+  border-top-color: rgba(255, 255, 255, 0.7);
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.error-card {
+  display: flex; align-items: center; gap: 9px;
+  max-width: min(420px, 86%); padding: 12px 16px;
+  background: rgba(20, 20, 24, 0.78); color: #fca5a5;
+  border: 1px solid rgba(252, 165, 165, 0.25); border-radius: 12px;
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+}
+.error-card svg { flex-shrink: 0; }
 
 .controls {
   position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%);
@@ -307,4 +338,11 @@ onBeforeUnmount(() => {
   border-radius: 50%; background: #fff; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
 }
 .controls .bar::-moz-range-thumb { width: 13px; height: 13px; border: none; border-radius: 50%; background: #fff; }
+
+@media (max-width: 560px) {
+  /* 小屏控制条：收掉时间读数，把空间留给进度条 */
+  .controls { bottom: 10px; gap: 2px; padding: 5px 6px; }
+  .controls .time { display: none; }
+  .controls .bar { width: 150px; max-width: 38vw; }
+}
 </style>
