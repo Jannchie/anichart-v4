@@ -32,9 +32,10 @@ onMounted(async () => {
   }
 })
 
+// monochrome：模板图标统一中性灰，色彩留给图表内容本身
 const templates = [
-  { key: 'basic', title: '基础示例', desc: 'id · 日期 · 数值，最小可用的条形竞赛', accent: '#4f46e5' },
-  { key: 'llm', title: 'LLM 天梯榜', desc: '按公司分色的大模型 Elo 排名变化', accent: '#0ea5e9' },
+  { key: 'basic', title: '基础示例', desc: 'id · 日期 · 数值，最小可用的条形竞赛', accent: '#666666' },
+  { key: 'llm', title: 'LLM 天梯榜', desc: '按公司分色的大模型 Elo 排名变化', accent: '#666666' },
 ]
 
 function fmtDate(ts: number) {

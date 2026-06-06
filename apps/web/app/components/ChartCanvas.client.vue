@@ -329,7 +329,7 @@ onBeforeUnmount(() => {
 .controls .bar::-webkit-slider-runnable-track {
   height: 4px; border-radius: 999px;
   background: linear-gradient(to right,
-    #5b8cff 0%, #5b8cff var(--range-progress, 0%),
+    #fff 0%, #fff var(--range-progress, 0%),
     rgba(255, 255, 255, 0.18) var(--range-progress, 0%), rgba(255, 255, 255, 0.18) 100%);
 }
 .controls .bar::-moz-range-track { height: 4px; border-radius: 999px; background: rgba(255, 255, 255, 0.18); }

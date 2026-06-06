@@ -4,25 +4,25 @@
 :root {
   color-scheme: light;
 
-  /* 表面与层级 */
-  --bg: #f7f7f8;
+  /* 表面与层级（Vercel 式中性灰阶） */
+  --bg: #fafafa;
   --surface: #ffffff;
-  --surface-2: #f4f4f5;
-  --surface-3: #ececee;
+  --surface-2: #f2f2f2;
+  --surface-3: #e8e8e8;
 
-  /* 描边 */
-  --border: #e7e7ea;
-  --border-strong: #d6d6da;
+  /* 描边：1px 细线是主要的层级手段 */
+  --border: #eaeaea;
+  --border-strong: #d4d4d4;
 
   /* 文本 */
-  --text: #18181b;
-  --text-2: #52525b;
-  --text-3: #9a9aa3;
+  --text: #171717;
+  --text-2: #666666;
+  --text-3: #999999;
 
-  /* 主色（indigo） */
-  --accent: #4f46e5;
-  --accent-hover: #4338ca;
-  --accent-soft: #eef2ff;
+  /* 主操作色（monochrome：亮色黑、暗色白；图表内容是全站唯一彩色） */
+  --accent: #171717;
+  --accent-hover: #383838;
+  --accent-soft: #f2f2f2;
   --accent-contrast: #ffffff;
 
   /* 语义色 */
@@ -30,7 +30,7 @@
   --danger-soft: #fef2f2;
 
   /* 半透明 chrome（顶栏等毛玻璃表面） */
-  --header-bg: rgba(255, 255, 255, 0.78);
+  --header-bg: rgba(255, 255, 255, 0.8);
 
   /* 圆角 */
   --r-sm: 8px;
@@ -54,27 +54,27 @@
 :root[data-theme='dark'] {
   color-scheme: dark;
 
-  --bg: #101013;
-  --surface: #18181b;
-  --surface-2: #232327;
-  --surface-3: #2e2e33;
+  --bg: #0a0a0a;
+  --surface: #111111;
+  --surface-2: #1a1a1a;
+  --surface-3: #262626;
 
-  --border: #27272b;
-  --border-strong: #3c3c42;
+  --border: #262626;
+  --border-strong: #3a3a3a;
 
-  --text: #f4f4f5;
-  --text-2: #a1a1aa;
-  --text-3: #71717a;
+  --text: #ededed;
+  --text-2: #a1a1a1;
+  --text-3: #707070;
 
-  --accent: #6366f1;
-  --accent-hover: #7c82f4;
-  --accent-soft: rgba(99, 102, 241, 0.18);
-  --accent-contrast: #ffffff;
+  --accent: #ededed;
+  --accent-hover: #cccccc;
+  --accent-soft: rgba(255, 255, 255, 0.09);
+  --accent-contrast: #0a0a0a;
 
   --danger: #f87171;
   --danger-soft: rgba(248, 113, 113, 0.12);
 
-  --header-bg: rgba(16, 16, 19, 0.78);
+  --header-bg: rgba(10, 10, 10, 0.8);
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3), 0 1px 3px rgba(0, 0, 0, 0.25);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.35), 0 2px 6px rgba(0, 0, 0, 0.3);
@@ -103,7 +103,8 @@ h1 { font-size: 30px; line-height: 1.2; }
 h2 { font-size: 20px; }
 p { margin: 0; }
 
-::selection { background: var(--accent-soft); }
+::selection { background: rgba(0, 0, 0, 0.1); }
+:root[data-theme='dark'] ::selection { background: rgba(255, 255, 255, 0.2); }
 
 /* ───────────────────────── 布局 ───────────────────────── */
 .container { width: 100%; max-width: 1120px; margin: 0 auto; padding: 0 24px; }
