@@ -62,14 +62,18 @@ export const dataset = pgTable('dataset', {
   createdAt: timestamp('created_at').notNull().defaultNow(),
 })
 
-// 可视化作品：引用一个数据集 + 一份图表配置（@anichart/core 的 Config 选项），分享页据此实时播放
+// 可视化作品：引用一个数据集 + 一份图表配置，观看页据此实时播放
 export const work = pgTable('work', {
   id: uuid('id').primaryKey().defaultRandom(),
   userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
   datasetId: uuid('dataset_id').notNull().references(() => dataset.id, { onDelete: 'restrict' }),
   title: text('title').notNull(),
+  description: text('description'),
   slug: text('slug').notNull().unique(),
-  chartConfig: jsonb('chart_config').notNull(), // 序列化后的 @anichart/core ConfigOptions
+  // 可序列化的 ChartSpec（app/lib/chart-spec.ts，纯原始类型）。
+  // 注意：不是 @anichart/core 的 ConfigOptions —— 那个含 accessor 函数无法 JSON 化；
+  // 播放端拿到 spec 后由 buildConfig() 运行时派生。
+  chartConfig: jsonb('chart_config').notNull(),
   visibility: text('visibility').notNull().default('private'), // 'public' | 'unlisted' | 'private'
   posterKey: text('poster_key'), // 可选封面图 key
   views: integer('views').notNull().default(0),

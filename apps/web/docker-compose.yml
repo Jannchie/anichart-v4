@@ -1,0 +1,51 @@
+# 本地开发基础设施：Postgres + MinIO（S3 兼容对象存储）。
+# 端口遵循仓库约定（每个服务独占端口，不用默认口）：
+#   Postgres 4305、MinIO API 4306、MinIO Console 4307。
+name: anichart-web
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - '4305:5432'
+    environment:
+      POSTGRES_USER: anichart
+      POSTGRES_PASSWORD: anichart
+      POSTGRES_DB: anichart
+    volumes:
+      - anichart-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U anichart -d anichart']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ':9001'
+    ports:
+      - '4306:9000'
+      - '4307:9001'
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+      # 浏览器直传（presigned PUT）需要放行 web dev 源
+      MINIO_API_CORS_ALLOW_ORIGIN: http://localhost:4300
+    volumes:
+      - anichart-minio:/data
+
+  # 一次性初始化：等 MinIO 就绪后建 bucket（幂等）
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 minioadmin minioadmin; do sleep 1; done;
+      mc mb --ignore-existing local/anichart;
+      exit 0
+      "
+
+volumes:
+  anichart-pg:
+  anichart-minio:
