@@ -40,11 +40,15 @@ Target one package with a filter:
 
 ```bash
 pnpm --filter @anichart/core build
-pnpm --filter playground dev
-pnpm --filter docs dev
-pnpm --filter web dev          # needs apps/web/.env (see .env.example)
-pnpm --filter studio start     # Remotion Studio
+pnpm --filter playground dev   # http://localhost:4301
+pnpm --filter docs dev         # http://localhost:4302 (preview: 4304)
+pnpm --filter web dev          # http://localhost:4300 — needs apps/web/.env (see .env.example)
+pnpm --filter studio start     # Remotion Studio, http://localhost:4303
 ```
+
+Every app pins a **unique dev port** (43xx range, configured in each app's
+config/scripts) so services never collide with each other or with other
+projects' defaults — keep this property when adding a new app.
 
 ### Critical build-ordering rule
 

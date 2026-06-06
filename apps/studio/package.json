@@ -6,8 +6,8 @@
   "description": "Remotion 视频渲染工程（包裹 @anichart/core 逐帧渲成 mp4）—— 未来视频导出功能的种子",
   "license": "UNLICENSED",
   "scripts": {
-    "dev": "remotion studio",
-    "start": "remotion studio",
+    "dev": "remotion studio --port 4303",
+    "start": "remotion studio --port 4303",
     "render": "remotion render AniComp out/anichart.mp4",
     "upgrade": "remotion upgrade",
     "lint": "eslint src",

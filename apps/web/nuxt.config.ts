@@ -3,6 +3,9 @@ export default defineNuxtConfig({
   compatibilityDate: '2025-05-30',
   devtools: { enabled: true },
 
+  // monorepo 内每个 app 用独占端口，避免与其它服务/项目的默认端口冲突
+  devServer: { port: 4300 },
+
   css: ['~/assets/css/main.css'],
 
   // PIXI 实时播放器只在客户端运行，避免 SSR 时引入 WebGL/DOM
@@ -21,7 +24,7 @@ export default defineNuxtConfig({
     },
     public: {
       // 客户端可见
-      authBaseUrl: process.env.BETTER_AUTH_URL ?? 'http://localhost:3000',
+      authBaseUrl: process.env.BETTER_AUTH_URL ?? 'http://localhost:4300',
     },
   },
 })
