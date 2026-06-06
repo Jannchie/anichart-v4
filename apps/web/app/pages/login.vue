@@ -16,7 +16,7 @@ async function submit() {
   if (error)
     message.value = error.message ?? '操作失败'
   else
-    await navigateTo('/dashboard')
+    await navigateTo('/studio')
 }
 </script>
 
