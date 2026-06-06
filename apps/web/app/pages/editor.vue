@@ -1,10 +1,15 @@
 <script setup lang="ts">
 import type { ChartSpec } from '~/lib/chart-spec'
+import type { Visibility } from '~/lib/publish'
 import type { WorkRecord } from '~/lib/store'
+import type { ApiWorkDetail } from '~/lib/works-api'
+import { authClient } from '~/lib/auth-client'
 import { defaultSpec, guessFields, parseCsv } from '~/lib/chart-spec'
+import { hashCsv, publishWork } from '~/lib/publish'
 import { getWorkBySlug, makeSlug, newId, saveWork } from '~/lib/store'
 
 const route = useRoute()
+const session = authClient.useSession()
 
 // ── 数据状态 ──
 const hasData = ref(false)
@@ -23,6 +28,14 @@ const saving = ref(false)
 const editingId = ref<string | null>(null)
 const existingSlug = ref<string | null>(null)
 const createdAt = ref(0)
+
+// ── 发布状态（云端关联） ──
+const description = ref('')
+const visibility = ref<Visibility>('public')
+const cloud = reactive({ slug: '', datasetId: '', csvHash: '' })
+const publishOpen = ref(false)
+const publishing = ref(false)
+const publishError = ref('')
 
 const canvas = ref<{ captureThumbnail: () => Promise<string | undefined> } | null>(null)
 
@@ -110,7 +123,7 @@ async function loadSample(key: string) {
   loadText(text, s.title, s.preset)
 }
 
-// 进入编辑既有作品（详情页「编辑」跳转）。
+// 进入编辑既有草稿（工作室「编辑」跳转）。
 async function loadExisting(slug: string) {
   const rec = await getWorkBySlug(slug)
   if (!rec)
@@ -121,12 +134,35 @@ async function loadExisting(slug: string) {
   title.value = rec.title
   loadText(rec.csvText, rec.title)
   Object.assign(spec, rec.spec)
+  // 草稿曾发布过 → 恢复云端关联，发布时走更新
+  if (rec.cloudSlug) {
+    cloud.slug = rec.cloudSlug
+    cloud.datasetId = rec.cloudDatasetId ?? ''
+    cloud.csvHash = rec.cloudCsvHash ?? ''
+  }
+}
+
+// 编辑云端作品（观看页/工作室「编辑」跳转，?work=<slug>）。
+async function loadCloud(slug: string) {
+  const meta = await $fetch<ApiWorkDetail>(`/api/works/${slug}`)
+  const csv = await $fetch<string>(`/api/works/${slug}/csv`, { responseType: 'text' })
+  title.value = meta.title
+  description.value = meta.description ?? ''
+  visibility.value = meta.visibility
+  loadText(csv, meta.title)
+  Object.assign(spec, defaultSpec(), meta.chartConfig)
+  cloud.slug = meta.slug
+  cloud.datasetId = meta.datasetId
+  cloud.csvHash = await hashCsv(csv)
 }
 
 onMounted(() => {
   const sample = route.query.sample as string | undefined
   const edit = route.query.edit as string | undefined
-  if (edit)
+  const work = route.query.work as string | undefined
+  if (work)
+    loadCloud(work).catch(() => { loadError.value = '云端作品加载失败，请确认登录与网络' })
+  else if (edit)
     loadExisting(edit)
   else if (sample)
     loadSample(sample)
@@ -135,7 +171,8 @@ onMounted(() => {
 const colorOptions = computed(() => [{ label: '跟随 id（每项一色）', value: '' }, ...columns.value.map(c => ({ label: c, value: c }))])
 const labelOptions = computed(() => [{ label: '跟随 id', value: '' }, ...columns.value.map(c => ({ label: c, value: c }))])
 
-async function save() {
+// 存草稿：写 IndexedDB（含云端关联，便于再次发布时复用数据集）。
+async function saveDraft() {
   if (!hasData.value || saving.value)
     return
   saving.value = true
@@ -154,12 +191,68 @@ async function save() {
       thumbnail,
       createdAt: createdAt.value || now,
       updatedAt: now,
+      cloudSlug: cloud.slug || undefined,
+      cloudDatasetId: cloud.datasetId || undefined,
+      cloudCsvHash: cloud.csvHash || undefined,
     }
     await saveWork(record)
+    editingId.value = record.id
+    existingSlug.value = record.slug
+    createdAt.value = record.createdAt
     await navigateTo(`/w/${slug}`)
   }
   finally {
     saving.value = false
+  }
+}
+
+// 发布：未登录先去登录；已登录打开发布面板。
+function openPublish() {
+  if (!session.value?.data?.user) {
+    navigateTo('/login')
+    return
+  }
+  publishError.value = ''
+  publishOpen.value = true
+}
+
+async function confirmPublish() {
+  if (publishing.value || !hasData.value)
+    return
+  publishing.value = true
+  publishError.value = ''
+  try {
+    const posterDataUrl = await canvas.value?.captureThumbnail()
+    const res = await publishWork({
+      title: title.value || '未命名作品',
+      description: description.value,
+      visibility: visibility.value,
+      spec: JSON.parse(JSON.stringify(spec)),
+      csvText: csvText.value,
+      fileName: fileName.value,
+      columns: [...columns.value],
+      rowCount: rowCount.value,
+      posterDataUrl,
+      existing: cloud.slug ? { slug: cloud.slug, datasetId: cloud.datasetId, csvHash: cloud.csvHash } : undefined,
+    })
+    cloud.slug = res.slug
+    cloud.datasetId = res.datasetId
+    cloud.csvHash = res.csvHash
+
+    // 来自本地草稿 → 把云端关联写回草稿
+    if (editingId.value) {
+      const rec = await getWorkBySlug(existingSlug.value!)
+      if (rec)
+        await saveWork({ ...rec, cloudSlug: res.slug, cloudDatasetId: res.datasetId, cloudCsvHash: res.csvHash, updatedAt: Date.now() })
+    }
+    publishOpen.value = false
+    await navigateTo(`/watch/${res.slug}`)
+  }
+  catch (e) {
+    publishError.value = e instanceof Error ? e.message : '发布失败，请重试'
+  }
+  finally {
+    publishing.value = false
   }
 }
 
@@ -184,14 +277,58 @@ function reset() {
       <input v-model="title" class="input title-input" placeholder="作品标题" :disabled="!hasData">
       <div class="toolbar-right">
         <span v-if="hasData" class="badge">{{ rowCount }} 行 · {{ columns.length }} 列</span>
-        <button class="btn btn-primary" :disabled="!hasData || saving" @click="save">
+        <button class="btn" :disabled="!hasData || saving" @click="saveDraft">
           <svg v-if="!saving" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" /><path d="M17 21v-8H7v8M7 3v5h8" />
           </svg>
-          {{ saving ? '保存中…' : '保存作品' }}
+          {{ saving ? '保存中…' : '存草稿' }}
+        </button>
+        <button class="btn btn-primary" :disabled="!hasData || publishing" @click="openPublish">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 19V5M5 12l7-7 7 7" />
+          </svg>
+          {{ cloud.slug ? '更新发布' : '发布' }}
         </button>
       </div>
     </div>
+
+    <!-- 发布面板 -->
+    <Teleport to="body">
+      <div v-if="publishOpen" class="pub-mask" @click.self="publishOpen = false">
+        <div class="pub-modal card">
+          <h3 class="pub-title">
+            {{ cloud.slug ? '更新发布' : '发布作品' }}
+          </h3>
+          <div class="field">
+            <label class="field-label">标题</label>
+            <input v-model="title" class="input" placeholder="作品标题">
+          </div>
+          <div class="field">
+            <label class="field-label">描述（可选）</label>
+            <textarea v-model="description" class="textarea" rows="3" placeholder="一句话介绍这张图表的看点" />
+          </div>
+          <div class="field">
+            <label class="field-label">可见性</label>
+            <SegmentedControl
+              v-model="visibility"
+              :options="[{ label: '公开', value: 'public' }, { label: '不公开', value: 'unlisted' }, { label: '私有', value: 'private' }]"
+            />
+            <span class="field-hint">公开会出现在首页 feed；不公开仅凭链接可看。</span>
+          </div>
+          <p v-if="publishError" class="pub-error">
+            {{ publishError }}
+          </p>
+          <div class="pub-actions">
+            <button class="btn" :disabled="publishing" @click="publishOpen = false">
+              取消
+            </button>
+            <button class="btn btn-primary" :disabled="publishing" @click="confirmPublish">
+              {{ publishing ? '发布中…' : (cloud.slug ? '更新' : '发布') }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
 
     <!-- 未导入数据：上传区 -->
     <div v-if="!hasData" class="dropzone-wrap">
@@ -440,4 +577,19 @@ function reset() {
   .title-input { min-width: 0; }
   .dropzone { padding: 36px 20px; }
 }
+
+/* 发布面板 */
+.pub-mask {
+  position: fixed; inset: 0; z-index: 100;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.45); padding: 16px;
+}
+.pub-modal {
+  width: min(440px, 100%); padding: 20px;
+  display: flex; flex-direction: column; gap: 14px;
+  box-shadow: var(--shadow-lg);
+}
+.pub-title { font-size: 16px; }
+.pub-error { font-size: 13px; color: var(--danger); }
+.pub-actions { display: flex; justify-content: flex-end; gap: 8px; }
 </style>

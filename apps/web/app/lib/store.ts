@@ -1,8 +1,8 @@
 import type { ChartSpec } from './chart-spec'
 
-// 本地优先的作品仓库：作品（数据 + 配置 + 缩略图）存浏览器 IndexedDB，
-// 让整套「上传 → 配置 → 预览 → 保存 → 浏览 → 详情」闭环无需后端即可跑通。
-// server/api 下的 Postgres + S3 是未来的生产持久化路径，与此并存、互不阻塞。
+// 本地草稿箱：作品（数据 + 配置 + 缩略图）存浏览器 IndexedDB。
+// 云端持久化（发布）走 server/api 的 Postgres + S3，见 lib/publish.ts；
+// 草稿发布后通过 cloud* 字段与云端作品建立关联，再次发布时复用数据集。
 
 export interface WorkRecord {
   id: string
@@ -15,6 +15,10 @@ export interface WorkRecord {
   thumbnail?: string // 预览某帧截图（dataURL），用于画廊封面
   createdAt: number
   updatedAt: number
+  // 已发布到云端时的关联（未发布则为空）
+  cloudSlug?: string
+  cloudDatasetId?: string
+  cloudCsvHash?: string
 }
 
 const DB_NAME = 'anichart'
