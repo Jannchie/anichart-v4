@@ -48,7 +48,9 @@ pnpm --filter studio start     # Remotion Studio, http://localhost:4303
 
 Every app pins a **unique dev port** (43xx range, configured in each app's
 config/scripts) so services never collide with each other or with other
-projects' defaults — keep this property when adding a new app.
+projects' defaults — keep this property when adding a new app or service.
+Currently allocated: web 4300, playground 4301, docs 4302 (preview 4304),
+studio 4303, Postgres 4305, MinIO 4306 (console 4307).
 
 ### Critical build-ordering rule
 
@@ -132,15 +134,38 @@ breaks the `types` pointer). `pixi.js` is a **peerDependency**.
   in a Remotion component: `useCurrentFrame()` → `bar.update(frame)`, with
   `delayRender`/`continueRender` around async data init. Output composition is
   `AniComp` in `Root.tsx`. Note: studio is **excluded from root eslint**.
-- **web** (`apps/web`, Nuxt 4) — `app/components/ChartCanvas.client.vue` reuses
-  core for in-browser playback (shared by editor preview and share page).
-  `app/lib/chart-spec.ts` is the key indirection: `ChartSpec` is a
-  **serializable** (primitives-only) config stored in DB/IndexedDB;
-  `buildConfig(spec)` derives the real `ConfigOptions` (with accessor functions)
-  at runtime. Backend: Drizzle ORM + Postgres (`server/db/schema.ts` —
-  better-auth tables + `dataset`/`work`), better-auth, S3-compatible storage for
-  raw CSVs. Video export (`server/utils/render.ts`) is a stubbed 501 placeholder
-  that will reuse the studio Remotion pipeline.
+- **web** (`apps/web`, Nuxt 4) — a YouTube-style content platform (feed /
+  watch / channel / search / studio) with Vercel-style monochrome design
+  tokens (`app/assets/css/main.css`, light+dark via `data-theme`).
+  `app/components/ChartCanvas.client.vue` reuses core for in-browser playback
+  (editor preview, watch page, feed hero). `app/lib/chart-spec.ts` is the key
+  indirection: `ChartSpec` is a **serializable** (primitives-only) config
+  stored in DB/IndexedDB; `buildConfig(spec)` derives the real `ConfigOptions`
+  (with accessor functions) at runtime — `work.chartConfig` in Postgres stores
+  `ChartSpec`, never `ConfigOptions`.
+
+  **Local backend** (`apps/web/docker-compose.yml`): Postgres 16 on **4305**,
+  MinIO on **4306** (console **4307**), bucket auto-created by the `minio-init`
+  container. Startup order matters:
+
+  ```bash
+  docker compose -f apps/web/docker-compose.yml up -d
+  cp apps/web/.env.example apps/web/.env   # + random BETTER_AUTH_SECRET
+  pnpm --filter web db:migrate
+  pnpm --filter web dev                    # 4300
+  pnpm --filter web db:seed                # needs dev server up (sign-up via HTTP)
+  ```
+
+  Data flow: editor drafts live in IndexedDB (`app/lib/store.ts`); publishing
+  (`app/lib/publish.ts`) presigns + direct-PUTs the CSV to S3, registers a
+  `dataset`, then POSTs the `work` with a base64 poster (server-side upload —
+  no browser CORS for images). Watch playback fetches CSV through the
+  server-side proxy `GET /api/works/[slug]/csv` (visibility enforced
+  server-side); posters proxy via `GET /api/posters/...`. Works routes are
+  keyed by **slug** everywhere — sibling dynamic params at the same path
+  segment must share one name (radix routing), so never add a `[id]` route
+  beside `works/[slug]`. Video export (`server/utils/render.ts`) is a stubbed
+  501 placeholder that will reuse the studio Remotion pipeline.
 
 ## Coding style & conventions
 
