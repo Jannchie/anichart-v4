@@ -9,6 +9,7 @@
     "dev": "remotion studio --port 4303",
     "start": "remotion studio --port 4303",
     "render": "remotion render AniComp out/anichart.mp4",
+    "render:aa": "remotion render AA out/aa.mp4",
     "upgrade": "remotion upgrade",
     "lint": "eslint src",
     "typecheck": "tsc"

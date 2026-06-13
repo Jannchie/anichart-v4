@@ -8,7 +8,8 @@
 import { Config } from '@remotion/cli/config'
 
 Config.setOverwriteOutput(true)
-Config.setMuted(true)
+// 默认不静音：含 <Audio> 的 composition（AA / AAZh BGM）渲染时带声音；无 <Audio> 的（base/Go/Stocks）仍是无声轨。
+Config.setMuted(false)
 Config.setCodec('h264')
 Config.setVideoBitrate('24M')
 Config.setVideoImageFormat('png')
