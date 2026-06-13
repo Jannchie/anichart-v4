@@ -4,12 +4,6 @@
   "version": "0.0.0",
   "description": "PIXI.js 动画数据图表引擎（Bar chart race / 折线趋势）",
   "license": "MIT",
-  "files": [
-    "dist"
-  ],
-  "main": "./dist/index.js",
-  "module": "./dist/index.js",
-  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -17,6 +11,12 @@
       "import": "./dist/index.js"
     }
   },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "vite build",
     "dev": "vite build --watch",
@@ -25,12 +25,12 @@
     "lint": "eslint src",
     "typecheck": "tsc --noEmit"
   },
+  "peerDependencies": {
+    "pixi.js": "^8.14.0"
+  },
   "dependencies": {
     "d3": "^7.9.0",
     "dayjs": "^1.11.21"
-  },
-  "peerDependencies": {
-    "pixi.js": "^8.14.0"
   },
   "devDependencies": {
     "@types/d3": "^7.4.3",

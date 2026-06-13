@@ -164,7 +164,8 @@ export class BarChart extends Container {
     // Determine drawable width after reserving space for labels and padding
     const maxBarWidth = Math.max(this.totalAvailableWidth - rightReservedWidth, 0)
     this.maxBarWidth = maxBarWidth
-    this.xAxisLabel.position.set(this.maxBarWidth / 2, 0)
+    // 与标题一致：对整个画布居中（xAxis 容器本身有 axisOffset 的横向偏移要扣掉）
+    this.xAxisLabel.position.set(config.width / 2 - axisOffset, 0)
     this.xAxisLabel.visible = hasXAxisLabel
     this.xAxisLabel.renderable = hasXAxisLabel
 

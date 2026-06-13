@@ -460,6 +460,16 @@ export class DataProcessor {
   //     |dist|≤1 的普通 1-rank 交换 aEff 不变 → 惯性观感与 velocity 完全一致。
   //   刻意不引入 softRank/前馈：前馈的 d(softRank)/dt 含 ε 抖动噪声，被 /dt 放大后会推动「无关柱」原地
   //     上下抽搐（实测方向反转数 20×），故弃用——boost 单独即可压逆序且零抽搐、运动全程平滑。
+  //
+  // lookahead（preview control，相位前移）：管线离线预计算、未来 rank 已知，target 取 t+L 帧的 rank
+  //   而非当帧。L ≈ 半个 1-rank 行程（Config 派生），使 blurRank 交叉恰好对中数据交叉点——
+  //   纯因果反馈的滞后型逆序（动画总在数据之后才交叉）被相位前移直接抵消，逆序时间 −60%~−90%，
+  //   而速度/加速度塑形一字未动（smoothnessEnergy / directionReversals 与无 lookahead 完全一致）。
+  //
+  // 底边淡变带限速（艺术减速，非对称）：blurRank ∈ (topN−1, topN) 即 alpha 渐变带内，
+  //   退场（v>0）限速 1/exitFadeSec、入场（v<0）限速 1/enterFadeSec —— 快速穿带的「闪现/闪退」
+  //   被拉长成至少 fade 秒的淡入淡出。入场限速会拖慢高 value 柱（= 新增逆序），因此入场柱的
+  //   lookahead 额外加 swapEnterExtraFrames：更早动身、慢速浮起、到位时间不变，逆序代价 ≈ 0。
   private static runVelocity(config: Config, result: RankedData[][], boost: number) {
     const T = result.length
     if (T === 0 || result[0].length === 0) {
@@ -473,6 +483,27 @@ export class DataProcessor {
     const maxAccel = 32 / (D * D)
     const minVel = 2 / D
     const topN = config.topN
+    const lookahead = config.swapLookaheadFrames
+    const enterLookahead = lookahead + (config.swapEnterFadeSec > 0 ? config.swapEnterExtraFrames : 0)
+    const useLookahead = enterLookahead > 0
+    const exitMaxVel = config.swapExitFadeSec > 0 ? 1 / config.swapExitFadeSec : Number.POSITIVE_INFINITY
+    const enterMaxVel = config.swapEnterFadeSec > 0 ? 1 / config.swapEnterFadeSec : Number.POSITIVE_INFINITY
+
+    // 未来帧 id→rank 的滑动窗口缓存：帧 f 只在 t ∈ [f−enterLookahead, f−lookahead] 期间被查询，
+    // 之后即可淘汰 —— 存活映射 ≤ (enterLookahead − lookahead + 2) 个，避免 O(N×T) 的整表驻留。
+    const futureRankCache = new Map<number, Map<string, number>>()
+    const futureRank = (frameIdx: number, id: string, fallback: number): number => {
+      const f = Math.min(T - 1, frameIdx)
+      let m = futureRankCache.get(f)
+      if (!m) {
+        m = new Map()
+        for (const item of result[f]) {
+          m.set(item.id, item.rank)
+        }
+        futureRankCache.set(f, m)
+      }
+      return m.get(id) ?? fallback
+    }
 
     const visualRank = new Map<string, number>()
     const velocity = new Map<string, number>()
@@ -503,7 +534,10 @@ export class DataProcessor {
         }
 
         const vrPrev = visualRank.get(d.id)!
-        const target = d.rank
+        // 在淡变带内或停车位（vrPrev > topN−1）的柱视为「入场中」，用更长的前移量补偿入场限速。
+        const target = useLookahead
+          ? futureRank(t + (vrPrev > topN - 1 ? enterLookahead : lookahead), d.id, d.rank)
+          : d.rank
         const dist = target - vrPrev
         const absDist = Math.abs(dist)
         // 距离自适应加速度（软饱和）：随 |dist| 平滑上升、渐近到 maxAccel·(1+boost) 上限，不硬截止；
@@ -516,6 +550,10 @@ export class DataProcessor {
 
         let v = velocity.get(d.id)!
         v += Math.max(-maxDv, Math.min(maxDv, desired - v))
+        // 淡变带限速：只压「快于 fade 节奏」的穿带（慢速换位本就低于上限，不受影响）。
+        if (vrPrev > topN - 1 && vrPrev < topN) {
+          v = Math.max(-enterMaxVel, Math.min(v, exitMaxVel))
+        }
         let vr = vrPrev + v * dt
 
         // 越过 target，或已贴住且速度低于 minVel → 吸附整数停住（收敛 + 防漂移）。
@@ -529,6 +567,11 @@ export class DataProcessor {
         velocity.set(d.id, v)
         d.blurRank = vr
         writeAlpha(d)
+      }
+      // 帧 t+lookahead 的最后使用者就是本轮 t，下一轮起只会查更靠后的帧 → 淘汰。
+      // 末尾 clamp 到 T−1 的映射保留到结束。
+      if (t + lookahead < T - 1) {
+        futureRankCache.delete(t + lookahead)
       }
     }
   }

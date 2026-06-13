@@ -891,3 +891,115 @@ describe('dataprocessor.applyvelocityaccel', () => {
     expect(framesAccel.at(-1)!.find(d => d.id === 'E')!.blurRank).toBeCloseTo(0, 2)
   })
 })
+
+describe('dataprocessor.lookahead 与底边淡变带限速', () => {
+  // 按 value 自动定 rank 的帧构造器（与 applyvelocityaccel 块的同名 helper 一致）。
+  function framesFromValueFn(
+    ids: string[],
+    T: number,
+    valueAt: (id: string, t: number) => number,
+    topN: number,
+  ): RankedData[][] {
+    const out: RankedData[][] = []
+    for (let t = 0; t < T; t++) {
+      const arr = ids.map(id => ({ id, value: valueAt(id, t) }))
+      arr.sort((a, b) => b.value - a.value)
+      out.push(arr.map((e, idx) => ({
+        id: e.id,
+        label: e.id,
+        value: e.value,
+        step: t,
+        alpha: 1,
+        raw: { id: e.id },
+        up: false,
+        rank: Math.min(idx, topN),
+        blurRank: 0,
+      })))
+    }
+    return out
+  }
+
+  // 每个 id 的 blurRank 序列。
+  function seriesOf(frames: RankedData[][], id: string): number[] {
+    return frames.map(f => f.find(d => d.id === id)!.blurRank)
+  }
+
+  it('config 派生：lookahead ≈ 0.175·d·fps − 1 帧，可显式覆盖/关闭', () => {
+    expect(new Config({ swap: { durationSec: 0.8 }, fps: 60 }).swapLookaheadFrames).toBe(7)
+    expect(new Config({ swap: { durationSec: 0.5 }, fps: 60 }).swapLookaheadFrames).toBe(4)
+    expect(new Config({ swap: { durationSec: 1.2 }, fps: 60 }).swapLookaheadFrames).toBe(12)
+    expect(new Config({ swap: { lookaheadSec: 0 } }).swapLookaheadFrames).toBe(0)
+    expect(new Config({ swap: { lookaheadSec: 0.2 }, fps: 60 }).swapLookaheadFrames).toBe(12)
+  })
+
+  it('lookahead 只动相位：逆序时间显著下降，smoothness / reversal 与无 lookahead 完全一致', () => {
+    const topN = 5
+    const T = 400
+    // 时间轴中段的暴涨：lookahead 有提前量可用（首帧换位对相位前移无感）。
+    const stable: Record<string, number> = { A: 100, B: 80, C: 60, D: 40 }
+    const valueAt = (id: string, t: number): number => {
+      if (id === 'E') {
+        const p = Math.max(0, Math.min(1, (t - 150) / 30))
+        return 10 + p * (200 - 10)
+      }
+      return stable[id]
+    }
+    const ids = ['A', 'B', 'C', 'D', 'E']
+    const cfgOff = new Config({ topN, swap: { durationSec: 0.8, lookaheadSec: 0, enterFadeSec: 0, exitFadeSec: 0 }, fps: 60 })
+    const cfgOn = new Config({ topN, swap: { durationSec: 0.8, enterFadeSec: 0, exitFadeSec: 0 }, fps: 60 })
+    const fOff = framesFromValueFn(ids, T, valueAt, topN)
+    const fOn = framesFromValueFn(ids, T, valueAt, topN)
+    DataProcessor.applyVelocityAccel(cfgOff, fOff)
+    DataProcessor.applyVelocityAccel(cfgOn, fOn)
+    const mOff = computeInversionMetrics(fOff, { fps: 60 })
+    const mOn = computeInversionMetrics(fOn, { fps: 60 })
+    expect(mOff.inversionPairFrames).toBeGreaterThan(0)
+    expect(mOn.inversionPairFrames).toBeLessThan(mOff.inversionPairFrames * 0.6)
+    // 相位前移不改变速度/加速度塑形：两条轨迹只差一个时移。
+    expect(mOn.smoothnessEnergy).toBeCloseTo(mOff.smoothnessEnergy, 6)
+    expect(mOn.directionReversals).toBe(mOff.directionReversals)
+    expect(fOn.at(-1)!.find(d => d.id === 'E')!.blurRank).toBeCloseTo(0, 2)
+  })
+
+  it('退场限速：穿越淡变带耗时 ≥ exitfadesec', () => {
+    const topN = 3
+    const T = 300
+    // D 在 t=100 暴跌出榜：无限速时按 arrive 曲线 ~0.2s 内穿带，限速后 ≥ 1s。
+    const valueAt = (id: string, t: number): number => {
+      if (id === 'D') {
+        return t < 100 ? 40 : 1
+      }
+      // C 初始低于 D：D 起始 rank=2（榜内），t=100 暴跌后被 C 顶替 → 穿越淡变带退场。
+      return ({ A: 100, B: 80, C: 30, E: 20 } as Record<string, number>)[id]
+    }
+    const ids = ['A', 'B', 'C', 'D', 'E']
+    const config = new Config({ topN, swap: { durationSec: 0.8, exitFadeSec: 1, enterFadeSec: 0 }, fps: 60 })
+    const frames = framesFromValueFn(ids, T, valueAt, topN)
+    DataProcessor.applyVelocityAccel(config, frames)
+    const inBand = seriesOf(frames, 'D').filter(r => r > topN - 1 && r < topN).length
+    // 1 rank @ ≤1 rank/s → ≈60 帧（入带前几帧未受限，留余量）。
+    expect(inBand).toBeGreaterThanOrEqual(45)
+    expect(frames.at(-1)!.find(d => d.id === 'D')!.blurRank).toBeCloseTo(topN, 5)
+  })
+
+  it('入场限速 + 额外相位前移：慢速浮起且按时到位收敛', () => {
+    const topN = 3
+    const T = 400
+    const valueAt = (id: string, t: number): number => {
+      if (id === 'E') {
+        const p = Math.max(0, Math.min(1, (t - 150) / 30))
+        return 10 + p * (200 - 10)
+      }
+      return ({ A: 100, B: 80, C: 60, D: 40 } as Record<string, number>)[id]
+    }
+    const ids = ['A', 'B', 'C', 'D', 'E']
+    const config = new Config({ topN, swap: { durationSec: 0.8, enterFadeSec: 0.5, exitFadeSec: 0 }, fps: 60 })
+    const frames = framesFromValueFn(ids, T, valueAt, topN)
+    DataProcessor.applyVelocityAccel(config, frames)
+    const sE = seriesOf(frames, 'E')
+    // 暴涨柱无限速时以 >10 rank/s 闪现穿带（≈4 帧）；限速 2 rank/s → ≥ ~25 帧。
+    const inBand = sE.filter(r => r > topN - 1 && r < topN).length
+    expect(inBand).toBeGreaterThanOrEqual(20)
+    expect(frames.at(-1)!.find(d => d.id === 'E')!.blurRank).toBeCloseTo(0, 2)
+  })
+})

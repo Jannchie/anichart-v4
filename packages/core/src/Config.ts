@@ -35,6 +35,15 @@ export interface SwapConfig {
   algorithm?: SwapAlgorithmName
   durationSec?: number // 纵向运动整体节奏标度，越大所有 y 向位移越慢
   accelBoost?: number // 距离自适应加速度系数 a_eff = a·(1 + accelBoost·max(0,|dist|−1))；仅 velocity-accel
+  // 目标 rank 的相位前移秒数（preview control）：管线离线预计算、未来已知，把 target 前移
+  // ≈ 半个 1-rank 行程，让视觉交叉对中到数据交叉点，逆序时间 −60%~−90% 而惯性塑形完全不变。
+  // 默认 auto（0.175·durationSec − 1 帧，bench 实测最优）；0 关闭。
+  lookaheadSec?: number
+  // 入场柱穿越底边淡变带（blurRank ∈ [topN−1, topN]）的最短耗时：限速由「额外相位前移」支付
+  // （更早动身、慢速浮起、到位时间不变），几乎不增加逆序。0 关闭。默认 0.3。
+  enterFadeSec?: number
+  // 退场柱穿越底边淡变带的最短耗时：沉出画面更从容。0 关闭。默认 0.5。
+  exitFadeSec?: number
 }
 
 // 折线图专用配置。
@@ -165,6 +174,10 @@ export class Config {
   swapAlgorithm: SwapAlgorithmName
   swapDurationSec: number
   swapAccelBoost: number
+  swapLookaheadFrames: number // 目标 rank 相位前移帧数，从 lookaheadSec 派生
+  swapEnterFadeSec: number
+  swapExitFadeSec: number
+  swapEnterExtraFrames: number // 入场限速的补偿性额外相位前移帧数，从 enterFadeSec 派生
   lineTimeAxisMode: LineTimeAxisMode
   lineTimeWindowRatio: number
   valueScaleType: ValueScaleType
@@ -247,6 +260,15 @@ export class Config {
     this.swapAlgorithm = swap.algorithm ?? 'velocity-accel'
     this.swapDurationSec = swap.durationSec ?? 0.8
     this.swapAccelBoost = swap.accelBoost ?? 2
+    // lookahead 默认 ≈ 半个 1-rank 行程（0.35·D / 2）再减一帧积分延迟。bench（go/gdp/llm 三数据集
+    // × D∈{0.5,0.8,1.2} 扫描）的逆序最小点均与该式吻合（D=0.8/60fps → 7 帧）。
+    const lookaheadSec = swap.lookaheadSec ?? Math.max(0, 0.175 * this.swapDurationSec - 1 / this.fps)
+    this.swapLookaheadFrames = Math.max(0, Math.round(lookaheadSec * this.fps))
+    this.swapEnterFadeSec = swap.enterFadeSec ?? 0.3
+    this.swapExitFadeSec = swap.exitFadeSec ?? 0.5
+    // 入场限速损失的行程时间用额外相位前移补回（≈0.55×enterFadeSec，bench 扫描最优），
+    // 使入场柱「早动身、慢浮起、到位时间不变」——慢入场不付逆序代价。
+    this.swapEnterExtraFrames = Math.round(0.55 * this.swapEnterFadeSec * this.fps)
 
     const line = input.line ?? {}
     this.lineTimeAxisMode = line.timeAxis ?? 'dynamic'
