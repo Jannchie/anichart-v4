@@ -1,7 +1,7 @@
 import type { ScaleLinear } from 'd3'
 import type { Config } from './Config'
 import type { RankedData } from './Data'
-import { blur, extent, InternSet } from 'd3'
+import { blur, extent, InternSet, scaleLinear } from 'd3'
 import { Container, Graphics, Sprite, Text, TextStyle } from 'pixi.js'
 import { BarComponent, EXTRA_VALUE_LABEL_PADDING } from './bar'
 import { textureMap } from './resources'
@@ -305,6 +305,18 @@ export class BarChart extends Container {
         minValue = Math.min(minValue, maxValue - referenceSpan * config.valueScaleMinRatio)
       }
       frameValueScales[i] = getValueScale(config.valueScaleType, minValue, maxValue, config.valueScaleDelta, adaptiveOptions)
+    }
+
+    // domain 下界二次平滑：min 序列的 blur 已削掉连续抖动，但 adaptive 变换 +「最后一名换人」仍会在
+    // 下界留折点，逐帧看是一顿一顿。对下界序列再 blur 一次钝化升降两个方向（上界=榜首不动）。adaptive
+    // 给的下界本就远低于真实最低值（留了 margin），二次平滑的滞后不足以让下界浮到数据之上 → 最低柱不
+    // 会负宽塌缩（实测 0 浮空帧）。
+    if (smoothingRadius > 0 && frameValueScales.length > 1) {
+      const loSeries = frameValueScales.map(s => s.domain()[0])
+      blur(loSeries, smoothingRadius)
+      for (let i = 0; i < frameValueScales.length; i += 1) {
+        frameValueScales[i] = scaleLinear().domain([loSeries[i], frameValueScales[i].domain()[1]]).range([0, 1])
+      }
     }
 
     return { frameValueScales, frameIdSets, frameMaxSteps, referenceSpan }
