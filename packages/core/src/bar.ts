@@ -305,5 +305,8 @@ export class BarComponent extends Container {
     this.extraValueLabel.position.set(this.valueLabel.x + this.valueLabel.width + EXTRA_VALUE_LABEL_PADDING, height / 2)
     this.position.set(x, y)
     this.alpha = this.settings.alpha
+    // 柱宽趋零时数值标签随之淡出，避免「只剩数字、没有柱子」的孤立标签：条目少或榜尾入场时
+    // value≈当前最短 → width≈0，而 bar 整体仍不透明。柱宽达到约一个柱高即完全显示。
+    this.valueContainer.alpha = Math.max(0, Math.min(1, width / Math.max(1, height)))
   }
 }

@@ -147,8 +147,13 @@ export class DataProcessor {
       })
       // rank: 在 topN 内严格按 value-sort（0..topN-1, unique）；超出 topN 的 bar 统一停在 rank=topN
       // （画面外一格的停车位）。alpha 由 applyVelocity 按 in-topN 状态推导。
-      for (const [i, d] of list.entries()) {
-        d.rank = Math.min(i, config.topN)
+      // 只在 alpha>0（可见/入场中）的条目之间按 value 定 rank 0..；alpha≤0 的未入场/已出场条目
+      // 一律停在 topN 停车位（画面外底部一格），且不占可见排序位次。否则当条目少时，value≈baseline
+      // 的大量填充条目会把正在入场的柱挤过 topN 边界，rank 在可见区↔停车位间跳变，blurRank 被甩成
+      // 「先下后上」，渐显途中还露出 width≈0 的「只有数字没有柱子」。隔离后入场只会从底部纯上浮。
+      let visibleIdx = 0
+      for (const d of list) {
+        d.rank = d.alpha > 0 ? Math.min(visibleIdx++, config.topN) : config.topN
         d.blurRank = d.rank
       }
       result.push(list)

@@ -20,6 +20,23 @@ function dashedVerticalLine(g: Graphics, x: number, y0: number, y1: number, dash
   }
 }
 
+// domain 下界软 min：每个可见 bar 按 alpha 平滑参与下拉——alpha→0 贡献 max（不下拉）、alpha→1 贡献
+// value。取代硬阈值「只看 alpha>=1」：那样 bar「转正」瞬间被突然纳入 min，造成 domain 阶跃、柱宽整体
+// 跳变。满屏稳定帧（全 alpha=1）退化为 min(values)，与原行为一致。
+function softFrameMin(emerging: RankedData[], max: number): number {
+  if (emerging.length === 0) {
+    return 0
+  }
+  let softMin = max
+  for (const item of emerging) {
+    const eff = max - item.alpha * (max - item.value)
+    if (eff < softMin) {
+      softMin = eff
+    }
+  }
+  return softMin
+}
+
 export class BarChart extends Container {
   maxBarWidth: number
   barComponentMap: Map<string, BarComponent>
@@ -216,7 +233,8 @@ export class BarChart extends Container {
   }
 
   // 预计算每帧值域 scale / id 集合 / 最大 step，以及 adaptive 的参考尺度（屏内首尾差中位数）。
-  // 下界 min 只看稳定 bar (alpha>=1)、上界 max 看渐入 bar (alpha>0)，避免入场/出场过渡造成 domain 阶跃；
+  // 上界 max 看渐入 bar (alpha>0)；下界 min 用 alpha 加权软 min（见 softFrameMin），让 bar 对下界的
+  // 下拉随 alpha 平滑增长，避免「转正(alpha 跨 1)」瞬间硬纳入 min 造成的 domain 阶跃（柱宽整体跳变）。
   // 平滑只用来让值域变化更顺，最终 domain 仍包住当帧真实 max（否则上升中的榜首会被 clamp）。
   private buildFrameScales(data: RankedData[][], config: Config) {
     const frameValueScales: ScaleLinear<number, number>[] = []
@@ -226,13 +244,10 @@ export class BarChart extends Container {
     const frameMaxValues: number[] = []
 
     for (const [i, d] of data.entries()) {
-      const stable = d.filter(item => item.alpha >= 1)
       const emerging = d.filter(item => item.alpha > 0)
-      const [min] = extent(stable, item => item.value)
       const [, max] = extent(emerging, item => item.value)
-      const safeMin = Number.isFinite(min) ? Number(min) : 0
       const safeMax = Number.isFinite(max) ? Number(max) : 0
-      frameMinValues[i] = safeMin
+      frameMinValues[i] = softFrameMin(emerging, safeMax)
       frameMaxValues[i] = safeMax
       frameIdSets[i] = new InternSet(d.map(item => item.id))
       let maxStep: number | undefined
@@ -275,9 +290,20 @@ export class BarChart extends Container {
       maxRatio: config.valueScaleMaxRatio,
     }
     for (let i = 0; i < data.length; i += 1) {
-      const minValue = smoothedMinValues[i] ?? frameMinValues[i] ?? 0
+      const realMin = frameMinValues[i] ?? 0
+      const realMax = frameMaxValues[i] ?? 0
+      // domain 下界不高于当前帧真实 min（对称于下面 maxValue 的兜底）：平滑会让 min 漂到真实值之上，
+      // 当稳定条目极少（如早期单一公司独大）时整个 domain 浮在数据上方，最高柱被算成负宽度而塌缩——
+      // 表现为相邻帧柱宽 99%→0% 的突变。
+      let minValue = Math.min(smoothedMinValues[i] ?? realMin, realMin)
       // domain 上界不低于当前帧真实 max：平滑滞后会把上升中的榜首 clamp，使柱长对应的刻度 < 数值标签。
-      const maxValue = Math.max(smoothedMaxValues[i] ?? 0, frameMaxValues[i] ?? 0)
+      const maxValue = Math.max(smoothedMaxValues[i] ?? 0, realMax)
+      // 真实数据只有单一 distinct 值（单一公司独大）时 span=0，自适应无可缩放跨度，domain 塌成点：
+      // 榜首柱宽 ill-defined、入场柱恒 0 宽（只剩数字）、相邻帧 99%→0% 突变。仅此退化情形用
+      // referenceSpan 撑一个稳定宽度（多柱帧 realMax>realMin，走原自适应、不受影响）。
+      if (realMax - realMin < 1e-9 && referenceSpan > 0) {
+        minValue = Math.min(minValue, maxValue - referenceSpan * config.valueScaleMinRatio)
+      }
       frameValueScales[i] = getValueScale(config.valueScaleType, minValue, maxValue, config.valueScaleDelta, adaptiveOptions)
     }
 
@@ -434,11 +460,11 @@ export class BarChart extends Container {
     const data = this.data[idx]
     let valueScale = this.frameValueScales[idx]
     if (!valueScale) {
-      // 与构造期一致：下界看稳定 bar、上界看渐入 bar（见上方主路径注释）。
-      const stable = data.filter(item => item.alpha >= 1)
+      // 与构造期一致：上界看渐入 bar、下界用 alpha 加权软 min（见上方主路径注释）。
       const emerging = data.filter(item => item.alpha > 0)
-      const [min] = extent(stable, d => d.value)
-      const [, max] = extent(emerging, d => d.value)
+      const [, mx] = extent(emerging, d => d.value)
+      const max = Number.isFinite(mx) ? Number(mx) : 0
+      const min = softFrameMin(emerging, max)
       valueScale = getValueScale(config.valueScaleType, min, max, config.valueScaleDelta, {
         referenceSpan: this.referenceSpan,
         minRatio: config.valueScaleMinRatio,
