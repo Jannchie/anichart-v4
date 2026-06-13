@@ -3,6 +3,7 @@ import { timeFormat } from 'd3'
 import { Application, Texture } from 'pixi.js'
 import { useEffect, useRef, useState } from 'react'
 import { continueRender, delayRender, staticFile, useCurrentFrame, useVideoConfig } from 'remotion'
+import { loadBerkeleyMono } from './fonts'
 
 // 美股市值 race 的 Remotion composition（与 apps/playground/src/datasets.ts 的 'stocks' 条目一致）。
 // 数据 stocks.csv 来自 scripts/update-stocks-data.py；公司展示名同时是 public/logos/ 的文件名。
@@ -109,6 +110,8 @@ async function init({
   config.canvasWidth = width
   config.canvasHeight = height
   config.totalDurationSec = durationInFrames / fps - config.swapDurationSec * 2
+  // 字体与 CSV 并行加载；BarChart 构建（创建 PIXI Text）前必须 await，否则文本按回退字体测量（衬线）。
+  const fontReady = loadBerkeleyMono()
   const data = await DataProcessor.processCSV(staticFile('stocks.csv'), config)
 
   // 公司 logo：BarChart 构建时从 textureMap 取图，所以要先加载完（与 baseComposition 一致）。
@@ -151,6 +154,7 @@ async function init({
   })
   document.querySelector('#canvas-el')?.replaceWith(app.canvas)
 
+  await fontReady
   const barChart = new BarChart(data, config)
   app.stage.addChild(barChart)
   barChart.update(0)
