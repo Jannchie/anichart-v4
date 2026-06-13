@@ -1,72 +1,72 @@
-import { BarChart, colors, Config, DataProcessor } from '@anichart/core'
+import { BarChart, colors, Config, DataProcessor, textureMap } from '@anichart/core'
 import { timeFormat } from 'd3'
-import { Application } from 'pixi.js'
+import { Application, Texture } from 'pixi.js'
 import { useEffect, useRef, useState } from 'react'
 import { continueRender, delayRender, staticFile, useCurrentFrame, useVideoConfig } from 'remotion'
 
+// 与 apps/playground/src/datasets.ts 保持一致：公司展示名出自
+// scripts/update-llm-data.py，同时是 public/logos/ 下的 logo 文件名。
 const colorMap = new Map([
   ['OpenAI', 0x74_A8_9B],
   ['Google', 0xFE_51_4D],
   ['Anthropic', 0xD2_75_56],
   ['Meta', 0x00_5F_D5],
-  ['微软', 0x00_A1_F1],
-  ['阿里巴巴', 0xFF_6C_00],
+  ['Microsoft', 0x00_A1_F1],
   ['Alibaba', 0xFF_6C_00],
   ['Mistral AI', 0xFF_70_00],
-  ['亚马逊', 0xFF_99_00],
   ['Amazon', 0xFF_99_00],
   ['Databricks', 0xFF_36_21],
-  ['深度求索', 0x41_69_E1],
   ['DeepSeek', 0x41_69_E1],
-  ['腾讯', 0x16_8E_FF],
-  ['MiniMax AI', 0xB1_65_FF],
-  ['零一万物', 0x18_4B_39],
-  ['艾伦人工智能研究所（AI2）', 0x23_4F_1E],
+  ['Tencent', 0x16_8E_FF],
+  ['MiniMax', 0xB1_65_FF],
+  ['01.AI', 0x18_4B_39],
   ['AI2', 0x23_4F_1E],
-  ['英伟达', 0x76_B9_00],
-  ['Nvidia', 0x76_B9_00],
   ['NVIDIA', 0x76_B9_00],
   ['IBM', 0x24_75_B2],
-  ['技术创新研究院（TII）', 0x77_44_FF],
+  ['TII', 0x77_44_FF],
   ['Perplexity AI', 0xAD_2E_FF],
   ['Cohere', 0xFF_D6_00],
   ['Snowflake', 0x56_B9_FF],
-  ['Upstage AI', 0xD7_3B_E2],
-  ['HuggingFace', 0xFF_D2_1F],
+  ['Upstage', 0xD7_3B_E2],
+  ['Hugging Face', 0xFF_D2_1F],
   ['Nous Research', 0x11_AA_99],
-  ['Teknium', 0xA0_10_6E],
   ['LMSYS', 0x7A_00_D6],
-  ['Ollama / 社区', 0x55_44_66],
-  ['社区', 0x88_88_88],
-  ['Tatsu Lab', 0x19_19_70],
-  ['BAIR', 0x1E_68_2E],
+  ['Stanford', 0xB1_04_0E],
+  ['UC Berkeley', 0x1E_68_2E],
   ['Nexusflow', 0xB2_15_56],
-  ['上海人工智能实验室', 0x0B_46_50],
-  ['RWKV 社区', 0x9B_4F_C7],
-  ['斯坦福大学', 0xB1_04_0E],
-  ['LAION / OpenAssistant', 0xA3_C6_44],
-  ['C4AI（阿根廷）', 0xE8_55_55],
+  ['InternLM', 0x0B_46_50],
+  ['RWKV', 0x9B_4F_C7],
+  ['OpenAssistant', 0xA3_C6_44],
   ['Reka AI', 0x78_3E_96],
-  ['Magistral AI', 0xDC_B2_39],
-  ['BAAI（QWQ 团队）', 0x18_A3_B6],
-  ['Step AI / 社区', 0xFF_4F_81],
-  ['SmolLM 项目 / 社区', 0xB7_A3_FF],
-  ['Eric Hartford / 社区', 0xA9_96_7B],
+  ['StepFun', 0xFF_4F_81],
+  ['Nomic AI', 0x4F_8A_C7],
+  ['Cognitive Computations', 0xA9_96_7B],
   ['AI21 Labs', 0xD9_27_67],
-  ['LMSys', 0x4D_76_A5],
   ['OpenChat', 0xA6_B1_15],
-  ['xAI', 0x6B_4F_7F],
-  ['智谱AI', 0x6B_4F_7F],
-  ['Zhipu AI', 0x49_7A_9A],
-  ['Moonshot', 0x32_63_DD],
-  ['Tencent', 0x41_69_E1],
+  ['Stability AI', 0x6B_4F_7F],
+  ['xAI', 0x8A_8A_93],
+  ['Z.ai', 0x49_7A_9A],
+  ['Moonshot AI', 0x32_63_DD],
+  ['Baidu', 0x29_32_E1],
+  ['ByteDance', 0x32_5A_B4],
+  ['Xiaomi', 0xFF_69_00],
+  ['Meituan', 0xFF_D1_00],
+  ['Ant Group', 0x16_77_FF],
+  ['Inception AI', 0x7C_3A_ED],
+  ['Prime Intellect', 0x00_B2_A9],
+  ['Together AI', 0x0F_6F_FF],
+  ['Arcee AI', 0xD2_3F_57],
+  ['MosaicML', 0xE0_38_3D],
+  ['Tsinghua', 0x66_08_74],
+  ['Princeton', 0xF5_80_25],
 ])
 
 const config = new Config({
   id: 'company',
   step: 'date',
   value: 'rating',
-  xAxisLabel: 'LMSYS Chatbot Arena Elo Rating',
+  image: 'company',
+  xAxisLabel: 'LMArena Elo Rating',
   getStepLabel(step) {
     const date = new Date(step * 1000)
     return timeFormat('%Y-%m-%d')(date)
@@ -84,7 +84,8 @@ const config = new Config({
   },
   getBarInfo: (d) => {
     const modelName = d.raw?.model || d.model || 'Unknown Model'
-    return `${modelName} - ${d.id}`
+    // 有 logo 时公司由 icon 表达，不再重复公司名；无 logo 才回退 "model - company"。
+    return textureMap.has(d.id) ? modelName : `${modelName} - ${d.id}`
   },
 })
 const app = new Application()
@@ -105,6 +106,42 @@ async function init({
   config.canvasHeight = height
   config.totalDurationSec = durationInFrames / fps - config.swapDurationSec * 2
   const data = await DataProcessor.processCSV(staticFile('llm.csv'), config)
+
+  // 公司 logo：BarChart 构建时从 textureMap 取图，所以要先加载完。
+  // 透明底的单色 glyph（lobehub 图标）贴边太挤，加一圈透明边距；不透明的方形
+  // 头像（GitHub 组织头像等）保持贴边（与 playground 一致）。
+  const LOGO_PADDING_RATIO = 0.14
+  const companies = [...new Set(data.flat().map(d => d.id))]
+  await Promise.all(companies.map(async (company) => {
+    if (textureMap.has(company)) {
+      return
+    }
+    try {
+      const image = new Image()
+      // 原始公司名直接交给 staticFile：Remotion 4.0 起 staticFile 自己会逐段 encodeURIComponent，
+      // 若这里再手动编码会双重编码（"Hugging Face" → Hugging%2520Face.png → 404，logo 静默丢失）。
+      image.src = staticFile(`logos/${company}.png`)
+      await image.decode()
+      const canvas = document.createElement('canvas')
+      const ctx = canvas.getContext('2d', { willReadFrequently: true })!
+      canvas.width = image.width
+      canvas.height = image.height
+      ctx.drawImage(image, 0, 0)
+      const { width: w, height: h } = canvas
+      const corners = [[0, 0], [w - 1, 0], [0, h - 1], [w - 1, h - 1]]
+      const isGlyph = corners.some(([x, y]) => ctx.getImageData(x, y, 1, 1).data[3] < 255)
+      if (isGlyph) {
+        const pad = Math.round(Math.max(w, h) * LOGO_PADDING_RATIO)
+        canvas.width = w + pad * 2
+        canvas.height = h + pad * 2
+        canvas.getContext('2d')!.drawImage(image, pad, pad)
+      }
+      textureMap.set(company, Texture.from(canvas))
+    }
+    catch {
+      // 没有 logo 的公司跳过
+    }
+  }))
   await app.init({
     width: config.canvasWidth,
     height: config.canvasHeight,
