@@ -9,7 +9,8 @@
     "dev": "remotion studio --port 4303",
     "start": "remotion studio --port 4303",
     "render": "remotion render AniComp out/anichart.mp4",
-    "render:aa": "remotion render AA out/aa.mp4",
+    "render:aa": "remotion render AA out/aa-silent.mp4 --scale=2 && ffmpeg -y -i out/aa-silent.mp4 -i public/neon-route.wav -c:v copy -c:a aac -b:a 320k -map 0:v:0 -map 1:a:0 -af volume=0.7 -movflags +faststart out/aa-4k.mp4 && rm -f out/aa-silent.mp4",
+    "render:aazh": "remotion render AAZh out/aazh-silent.mp4 --scale=2 && ffmpeg -y -i out/aazh-silent.mp4 -i public/neon-route.wav -c:v copy -c:a aac -b:a 320k -map 0:v:0 -map 1:a:0 -af volume=0.7 -movflags +faststart out/aazh-4k.mp4 && rm -f out/aazh-silent.mp4",
     "upgrade": "remotion upgrade",
     "lint": "eslint src",
     "typecheck": "tsc"

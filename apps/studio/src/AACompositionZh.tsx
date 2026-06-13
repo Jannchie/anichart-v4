@@ -120,6 +120,7 @@ export function AACompositionZh() {
 
   return (
     <>
+      {/* 见 AAComposition：仅供 Studio 预览发声；成片 BGM 由 `pnpm render:aazh` 脚本 mux 上去。 */}
       <Audio src={staticFile('neon-route.wav')} volume={0.7} />
       <canvas id="canvas-el" />
     </>

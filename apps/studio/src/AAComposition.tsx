@@ -107,7 +107,9 @@ export function AAComposition() {
 
   return (
     <>
-      {/* BGM：Suno 生成的 Neon Route（56.72s）。视频时长已在 Root 里贴到同长度，播一遍到尾、不 loop；volume 可调（0~1）。 */}
+      {/* BGM：Suno 生成的 Neon Route（56.72s），播一遍到尾、不 loop；volume 可调（0~1）。
+          注意：这套命令式 PIXI 画布结构下，Remotion 渲染会判定 shouldRenderAudio=false、丢掉 <Audio>，
+          所以这里只为 Remotion Studio 预览发声；成片的 BGM 由 `pnpm render:aa` 脚本用 ffmpeg mux 上去。 */}
       <Audio src={staticFile('neon-route.wav')} volume={0.7} />
       <canvas id="canvas-el" />
     </>
