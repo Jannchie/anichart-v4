@@ -443,7 +443,11 @@ async function loadData() {
     rawRows = await csv(activeDataset.file)
     rawRowsCache.set(activeDataset.file, rawRows)
   }
+  // 图表构建（rebuildChart）时才从 textureMap 取图，纹理只需先于建图就绪——
+  // 与同步的 processRows 并行加载，省掉一段纯网络等待。
+  const assetsReady = activeDataset.loadAssets?.(rawRows)
   data = DataProcessor.processRows(rawRows, config)
+  await assetsReady
   const m = computeInversionMetrics(data, { fps: config.fps })
   metricsLabel.textContent = `逆序对×帧 ${m.inversionPairFrames} · 惯性 ${m.smoothnessEnergy.toFixed(0)}`
 }
