@@ -19,6 +19,16 @@ dist-ssr
 .data
 apps/studio/out
 
+# 本地生成的资源与数据集（不入库）：logo 图、字体（含商业授权的 Berkeley Mono）、
+# BGM、各榜单 CSV、抓取脚本的中间数据。需要时各自用 scripts/ 下脚本重新生成。
+apps/*/public/logos/
+apps/studio/public/fonts/
+apps/studio/public/*.wav
+apps/*/public/*-*.csv
+apps/*/public/stocks.csv
+scripts/__pycache__/
+scripts/data/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
