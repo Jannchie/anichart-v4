@@ -723,6 +723,92 @@ describe('dataprocessor.applyvelocity', () => {
     expect(last.find(d => d.id === 'D')!.blurRank).toBeCloseTo(4, 5)
   })
 
+  it('未满榜入场：snap 到簇底、不从 topn 长途上滑，renderalpha 走 ramp 淡入', () => {
+    // 簇内常驻 A/B/C（3 根，远小于 topN=8）。D 在 ENTER_AT 帧入场，value 始终 < C → 自然排在簇底 rank=3。
+    // 期望：D 直接出现在簇底（snap），不再从屏外 rank=8 一路上滑；不透明度随 enter ramp 就地淡入；
+    // A/B/C 完全不受影响（D 从底部出现，没有把谁挤开）。
+    const config = new Config({ topN: 8, swap: { durationSec: 0.5 }, fps: 60 })
+    const N = 60
+    const ENTER_AT = 20
+    const RAMP = 12
+    const rampAlpha = (t: number): number => Math.min(1, (t - ENTER_AT + 1) / RAMP)
+    const result: RankedData[][] = []
+    for (let i = 0; i < N; i++) {
+      const dCell = i < ENTER_AT
+        // 入场前：停车位 rank=topN、alpha=0。
+        ? makeRanked('D', config.topN, { value: 10, alpha: 0 })
+        // 入场中：value<C → 排在簇底 rank=3，alpha 为 ramp，打上 entering 标记。
+        : makeRanked('D', 3, { value: 50, alpha: rampAlpha(i), entering: true })
+      result.push([
+        makeRanked('A', 0, { value: 100 }),
+        makeRanked('B', 1, { value: 80 }),
+        makeRanked('C', 2, { value: 60 }),
+        dCell,
+      ])
+    }
+    DataProcessor.applyVelocity(config, result)
+
+    // 入场前一帧：D 仍停在 topN、renderAlpha=0（不可见）—— lookahead 没把它提前拽出停车位。
+    const dPrev = result[ENTER_AT - 1].find(d => d.id === 'D')!
+    expect(dPrev.blurRank).toBeCloseTo(config.topN, 5)
+    expect(dPrev.renderAlpha).toBeCloseTo(0, 5)
+
+    // 入场首帧：直接 snap 到簇底 rank=3（而非仍≈8 等着慢慢下滑）。
+    expect(result[ENTER_AT].find(d => d.id === 'D')!.blurRank).toBeCloseTo(3, 5)
+
+    // 入场全程：D 恒在簇底 3（value 不变、不挤动 A/B/C），renderAlpha 跟随 ramp 就地淡入（不是底边带给的 1）。
+    for (let t = ENTER_AT; t < N; t++) {
+      const dD = result[t].find(d => d.id === 'D')!
+      expect(dD.blurRank).toBeCloseTo(3, 5)
+      expect(dD.renderAlpha).toBeCloseTo(rampAlpha(t), 5)
+    }
+
+    // A/B/C 全程不受 D 入场影响：名次不变、renderAlpha 恒为 1（常驻、由纵向位置决定）。
+    for (let t = 0; t < N; t++) {
+      expect(result[t].find(d => d.id === 'A')!.blurRank).toBeCloseTo(0, 5)
+      expect(result[t].find(d => d.id === 'B')!.blurRank).toBeCloseTo(1, 5)
+      expect(result[t].find(d => d.id === 'C')!.blurRank).toBeCloseTo(2, 5)
+      expect(result[t].find(d => d.id === 'A')!.renderAlpha).toBeCloseTo(1, 5)
+    }
+  })
+
+  it('未满榜入场后 value 爬升超过他人：从簇底平滑换位上去（非逐帧硬跳）', () => {
+    // D 先在簇底 rank=3 出现，CROSS 帧起 value 升过 C → D 应到 rank=2、C 退到 rank=3，且过程平滑、单调。
+    const config = new Config({ topN: 8, swap: { durationSec: 0.5 }, fps: 60 })
+    const N = 240
+    const ENTER_AT = 20
+    const CROSS = 40
+    const result: RankedData[][] = []
+    for (let i = 0; i < N; i++) {
+      const frame: RankedData[] = [makeRanked('A', 0, { value: 100 }), makeRanked('B', 1, { value: 80 })]
+      if (i < ENTER_AT) {
+        frame.push(makeRanked('C', 2, { value: 60 }), makeRanked('D', config.topN, { value: 10, alpha: 0 }))
+      }
+      else if (i < CROSS) {
+        // D 入场、value=50 < C：簇底 rank=3。
+        frame.push(makeRanked('C', 2, { value: 60 }), makeRanked('D', 3, { value: 50, alpha: 1, entering: true }))
+      }
+      else {
+        // D value=70 升过 C：D→rank2、C→rank3。
+        frame.push(makeRanked('D', 2, { value: 70, alpha: 1, entering: true }), makeRanked('C', 3, { value: 60 }))
+      }
+      result.push(frame)
+    }
+    DataProcessor.applyVelocity(config, result)
+
+    // 入场首帧 snap 到 3。
+    expect(result[ENTER_AT].find(d => d.id === 'D')!.blurRank).toBeCloseTo(3, 5)
+    // 换位完成：D 收敛到 2、C 收敛到 3。
+    expect(result.at(-1)!.find(d => d.id === 'D')!.blurRank).toBeCloseTo(2, 4)
+    expect(result.at(-1)!.find(d => d.id === 'C')!.blurRank).toBeCloseTo(3, 4)
+    // D 从 3 到 2 单调上行（不超调到 <2、不回弹），证明是平滑 velocity 换位而非硬跳/抖动。
+    const blursD = result.slice(ENTER_AT).map(f => f.find(d => d.id === 'D')!.blurRank)
+    for (let k = 1; k < blursD.length; k++) {
+      expect(blursD[k]).toBeLessThanOrEqual(blursD[k - 1] + 1e-9)
+      expect(blursD[k]).toBeGreaterThanOrEqual(2 - 1e-9)
+    }
+  })
+
   it('3-bar reshuffle: 中间 bar 不会停滞重叠', () => {
     // A=0,B=1,C=2 → C=0,B=1,A=2。B 的 target 不变（rank=1）但视觉上是「让位」过程。
     // velocity 模型：B 的 target 始终为 1，速度为 0，blurRank 一直 = 1，独立于 A/C 交换。

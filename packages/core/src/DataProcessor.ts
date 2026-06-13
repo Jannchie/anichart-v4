@@ -23,6 +23,8 @@ interface SampleResult {
   value: number
   alpha: number
   raw: any
+  // 入场 ramp 阶段标记：runVelocity 在未满榜时让这根柱就地从簇底淡入长出，而非穿越屏外底边淡变带。
+  entering?: boolean
 }
 
 type BaselineFn = (step: number) => number
@@ -103,16 +105,20 @@ export class DataProcessor {
     const valueCols: Float64Array[] = []
     const alphaCols: Float64Array[] = []
     const rawCols: any[][] = []
+    // 入场标记：该帧该 bar 是否处于 enter ramp。runVelocity 在未满榜时据此让它就地淡入（不靠穿越底边带）。
+    const enterCols: Uint8Array[] = []
     const radius = config.valueSmoothingRadius
     for (const sampler of samplers) {
       const values = new Float64Array(T)
       const alphas = new Float64Array(T)
       const raws: any[] = Array.from({ length: T })
+      const entering = new Uint8Array(T)
       for (let t = 0; t < T; t++) {
         const sampled = DataProcessor.sampleAtStep(sampler, stepList[t], baselines[t], transitionSteps, carrySteps)
         values[t] = sampled.value
         alphas[t] = sampled.alpha
         raws[t] = sampled.raw
+        entering[t] = sampled.entering ? 1 : 0
       }
       if (radius > 0) {
         DataProcessor.smoothVisibleSegments(values, alphas, radius)
@@ -120,10 +126,12 @@ export class DataProcessor {
       valueCols.push(values)
       alphaCols.push(alphas)
       rawCols.push(raws)
+      enterCols.push(entering)
     }
 
     // 第二遍：逐帧组装 → 按 value desc 排序 → 定 rank。
     const result: RankedData[][] = []
+    const topN = config.topN
     for (let t = 0; t < T; t++) {
       const list: RankedData[] = []
       for (let si = 0; si < N; si++) {
@@ -137,6 +145,8 @@ export class DataProcessor {
           up: false,
           rank: 0,
           blurRank: 0,
+          // 入场标记透传给 runVelocity：未满榜入场柱就地淡入（renderAlpha 走 ramp）而非穿底边带。
+          entering: enterCols[si][t] === 1,
         })
       }
       // 按 value desc 排序：value=baseline 的 bar 自然落到尾部。NaN 兜底 → -Infinity。
@@ -153,7 +163,7 @@ export class DataProcessor {
       // 「先下后上」，渐显途中还露出 width≈0 的「只有数字没有柱子」。隔离后入场只会从底部纯上浮。
       let visibleIdx = 0
       for (const d of list) {
-        d.rank = d.alpha > 0 ? Math.min(visibleIdx++, config.topN) : config.topN
+        d.rank = d.alpha > 0 ? Math.min(visibleIdx++, topN) : topN
         d.blurRank = d.rank
       }
       result.push(list)
@@ -294,8 +304,10 @@ export class DataProcessor {
   //   其他（段外远离 / 段间长 gap）        → value=baseline, alpha=0
   //
   // baseline 由 buildBaselineScale 按 valueScaleType 算出当前帧的「显示最小值」，所以入场 bar 从轴底浮起，
-  // 出场 bar 沉到轴底。rank 由排序按当前 sampled value 自然推导：value 小 → rank=parking → applyVelocity
-  // 把它压在屏外；value 长大穿过 topN 末位后，target rank ∈ [0, topN)，visualRank 平滑跟随。
+  // 出场 bar 沉到轴底。rank 始终由排序按当前 sampled value 自然推导：入场柱 value 从 baseline 爬升，先排在
+  // 可见簇末位（簇底），value 长大才上升——绝不凭空插到中间挤开他人。满榜时 value 小 → rank=parking →
+  // applyVelocity 把它压在屏外底边、自下浮起；未满榜时 runVelocity 直接 snap 到簇底、就地从 width≈0 淡入长出
+  // （entering 标记驱动 renderAlpha 走 ramp，不靠穿越底边带）。
   // applyVelocity 的 alpha 用 min(sampleAlpha, parkingMask)：ramp 阶段跟随 sampleAlpha，parking 时强制 0。
   private static sampleAtStep(
     sampler: Sampler,
@@ -328,6 +340,7 @@ export class DataProcessor {
             value: lerp(baseline, target.value, eased),
             alpha: eased,
             raw: { ...target.raw },
+            entering: true,
           }
         }
       }
@@ -515,33 +528,61 @@ export class DataProcessor {
 
     // alpha = min(sampleAlpha, parkingMask)：sampleAlpha（入参 d.alpha）跟随 enter/exit ramp 的 0↔1；
     // parkingMask = clamp(topN - blurRank, 0, 1) 把 parking 槽 (blurRank≥topN) 压成透明。
-    const writeAlpha = (d: RankedData) => {
+    // renderAlpha（柱体最终不透明度，BarChart 直接取用）：未满榜入场柱就地淡入 → 跟随 ramp 后的 d.alpha；
+    // 其余维持「只由纵向位置决定」的 parkingMask（满榜入场穿越底边带淡入、常驻柱恒 1），与原渲染逐帧一致。
+    const writeAlpha = (d: RankedData, notFull: boolean) => {
       const parkingMask = Math.max(0, Math.min(1, topN - d.blurRank))
       d.alpha = Math.min(d.alpha, parkingMask)
+      d.renderAlpha = notFull && d.entering ? d.alpha : parkingMask
+    }
+    const countNotFull = (frame: RankedData[]): boolean => {
+      let visibleCount = 0
+      for (const d of frame) {
+        if (d.alpha > 0) {
+          visibleCount++
+        }
+      }
+      return visibleCount <= topN
     }
 
     // 第 0 帧、以及中途首次出现的新 id：直接 snap 到 rank，速度 0。
-    const seed = (d: RankedData) => {
+    const seed = (d: RankedData, notFull: boolean) => {
       visualRank.set(d.id, d.rank)
       velocity.set(d.id, 0)
       d.blurRank = d.rank
-      writeAlpha(d)
+      writeAlpha(d, notFull)
     }
+    const notFull0 = countNotFull(result[0])
     for (const d of result[0]) {
-      seed(d)
+      seed(d, notFull0)
     }
 
     for (let t = 1; t < T; t++) {
+      // 未满榜（可见条目 ≤ topN）：入场柱（上一帧还停在屏外停车位 vrPrev≈topN、本帧刚按 value 排进可见簇底）
+      // 直接 snap 到簇底名次 —— 就地从 width≈0 淡入长出，不再自屏外底部一路上滑。snap 发生时 ramp≈0、
+      // renderAlpha≈0，所以这一跳不可见；之后按 value 自然爬升（不挤开他人）。满榜时不 snap，维持自停车位浮起。
+      const notFull = countNotFull(result[t])
       for (const d of result[t]) {
         if (!visualRank.has(d.id)) {
-          seed(d)
+          seed(d, notFull)
           continue
         }
 
         const vrPrev = visualRank.get(d.id)!
+        if (notFull && vrPrev >= topN - 1e-6 && d.rank < topN) {
+          visualRank.set(d.id, d.rank)
+          velocity.set(d.id, 0)
+          d.blurRank = d.rank
+          writeAlpha(d, notFull)
+          continue
+        }
         // 在淡变带内或停车位（vrPrev > topN−1）的柱视为「入场中」，用更长的前移量补偿入场限速。
+        // 但未满榜时不给停车位柱做提前上移：否则 lookahead 会在 ramp 开始前就把它从屏外拽出来，等真正入场时
+        // vrPrev 已 < topN、下面的 snap 失效 → 退化回「自屏外底部长途上滑」。停在 topN 等 snap 接管才能就地出现。
+        const parkedOrBand = vrPrev > topN - 1
+        const lookaheadFrames = parkedOrBand ? (notFull ? 0 : enterLookahead) : lookahead
         const target = useLookahead
-          ? futureRank(t + (vrPrev > topN - 1 ? enterLookahead : lookahead), d.id, d.rank)
+          ? futureRank(t + lookaheadFrames, d.id, d.rank)
           : d.rank
         const dist = target - vrPrev
         const absDist = Math.abs(dist)
@@ -571,7 +612,7 @@ export class DataProcessor {
         visualRank.set(d.id, vr)
         velocity.set(d.id, v)
         d.blurRank = vr
-        writeAlpha(d)
+        writeAlpha(d, notFull)
       }
       // 帧 t+lookahead 的最后使用者就是本轮 t，下一轮起只会查更靠后的帧 → 淘汰。
       // 末尾 clamp 到 T−1 的映射保留到结束。
