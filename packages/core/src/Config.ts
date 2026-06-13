@@ -1,6 +1,7 @@
 import type { Data } from './Data'
 import dayjs from 'dayjs'
 import { colorMap, colors } from './resources'
+import { DEFAULT_SCRAMBLE_CHARS } from './utils/textScramble'
 
 export type ValueScaleType = 'from-zero' | 'from-min' | 'from-delta' | 'adaptive'
 
@@ -44,6 +45,15 @@ export interface SwapConfig {
   enterFadeSec?: number
   // 退场柱穿越底边淡变带的最短耗时：沉出画面更从容。0 关闭。默认 0.5。
   exitFadeSec?: number
+}
+
+// 柱内文本「重写」动画配置：当条目文本（barInfo / label）发生变化时，不再突变，而是逐字符位
+// 做解码/黑客帝国式过渡。只作用于偶发变化的描述性文本，不含每帧都变的数值标签。
+export interface TextScrambleConfig {
+  enabled?: boolean // 默认 true
+  durationSec?: number // 单次过渡时长（秒），默认 0.6
+  chars?: string // 扰动字形池，默认 DEFAULT_SCRAMBLE_CHARS
+  fields?: Array<'barInfo' | 'label'> // 应用到哪些文本，默认两者都用
 }
 
 // 折线图专用配置。
@@ -91,6 +101,7 @@ export interface ConfigInput {
   line?: LineConfig
   valueScale?: ValueScaleConfig
   valueSmoothing?: number // 横向 value 时间平滑窗口（秒）：削数据逐点锯齿（如围棋逐局赢跌）造成的「柱长左右抽搐」。0 关闭，默认 0.2
+  textScramble?: TextScrambleConfig // 柱内文本变化时的「重写」动画
 
   // 柱体布局。
   barGap?: number
@@ -102,6 +113,7 @@ export interface ConfigInput {
   showLabel?: boolean
   xAxisLabel?: string
   title?: string
+  subtitle?: string // 标题下方一行小字，通常放数据来源 / 副标题
 
   // 画布 / 几何。
   canvasWidth?: number
@@ -187,6 +199,12 @@ export class Config {
   valueScaleSmoothing: number // 从 swapDurationSec 自动派生
   valueSmoothingRadius: number // 横向 value 时间平滑半径（帧），从 valueSmoothing 秒派生
 
+  // ---- 文本重写动画（扁平存储，构造时从 textScramble 归一） ----
+  textScrambleEnabled: boolean
+  textScrambleDurationFrames: number // 从 durationSec × fps 派生
+  textScrambleChars: string
+  textScrambleFields: Array<'barInfo' | 'label'>
+
   // ---- 柱体布局 ----
   barGap: number
   barHeight: number
@@ -198,6 +216,7 @@ export class Config {
   showLabel: boolean
   xAxisLabel: string
   title: string
+  subtitle: string
 
   // ---- 画布 / 几何 ----
   canvasWidth: number
@@ -284,6 +303,14 @@ export class Config {
     // 横向 value 时间平滑半径（帧）：按秒×fps 派生，保证不同 fps 下时间窗一致。0 关闭。
     this.valueSmoothingRadius = Math.max(0, Math.round((input.valueSmoothing ?? 0.2) * this.fps))
 
+    // ---- 文本重写动画：归一到扁平字段 ----
+    const textScramble = input.textScramble ?? {}
+    this.textScrambleEnabled = textScramble.enabled ?? true
+    // 时长按秒×fps 派生（至少 1 帧），保证不同 fps 下过渡时长一致。
+    this.textScrambleDurationFrames = Math.max(1, Math.round((textScramble.durationSec ?? 0.6) * this.fps))
+    this.textScrambleChars = textScramble.chars ?? DEFAULT_SCRAMBLE_CHARS
+    this.textScrambleFields = textScramble.fields ?? ['barInfo', 'label']
+
     // ---- 柱体布局 ----
     this.barGap = input.barGap ?? 4
     const barHeight = input.barHeight ?? 'auto'
@@ -296,6 +323,7 @@ export class Config {
     this.showLabel = input.showLabel ?? false
     this.xAxisLabel = input.xAxisLabel ?? ''
     this.title = input.title ?? ''
+    this.subtitle = input.subtitle ?? ''
 
     // ---- 画布 / 几何 ----
     this.canvasWidth = input.canvasWidth ?? 1920

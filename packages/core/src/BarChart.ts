@@ -5,10 +5,17 @@ import { blur, extent, InternSet, scaleLinear } from 'd3'
 import { Container, Graphics, Sprite, Text, TextStyle } from 'pixi.js'
 import { BarComponent, EXTRA_VALUE_LABEL_PADDING } from './bar'
 import { textureMap } from './resources'
-import { computeReferenceSpan, MUTED_LABEL_COLOR, smoothTicksAlpha, TICK_LINE_COLOR, TITLE_FONT_SIZE, TITLE_PADDING } from './utils/chartChrome'
+import { computeReferenceSpan, MUTED_LABEL_COLOR, smoothTicksAlpha, SUBTITLE_FONT_SIZE, SUBTITLE_GAP, TICK_LINE_COLOR, TITLE_FONT_SIZE, TITLE_PADDING } from './utils/chartChrome'
 import { getExtraValueLabelFontSize, getValueLabelFontSize } from './utils/labelFonts'
 import { getValueScale } from './utils/scale'
 import { measureTextWidth } from './utils/textMetrics'
+import { scrambleText } from './utils/textScramble'
+
+// 某条目某段文本恒定的区间起点：{ frame: 该文本生效的首帧, text: 文本 }。相邻段之间即一次「变化」。
+interface TextSegment {
+  frame: number
+  text: string
+}
 
 const Z_ORDER_HYSTERESIS = 1
 
@@ -43,6 +50,7 @@ export class BarChart extends Container {
   xAxis: Container
   stepLabel: Text
   titleLabel: Text
+  subtitleLabel: Text
   data: RankedData[][]
   config: Config
   ticksAlphaMap: Map<number, number[]>
@@ -63,6 +71,9 @@ export class BarChart extends Container {
   frameIdSets: InternSet<string>[]
   frameMaxSteps: Array<number | undefined>
   barZOrder: string[]
+  // 文本变化时间线（按 id）：仅在 textScramble 开启且对应字段启用时构建，否则为 undefined（走原直显路径）。
+  private barInfoTimeline?: Map<string, TextSegment[]>
+  private labelTimeline?: Map<string, TextSegment[]>
   constructor(data: RankedData[][], config: Config) {
     super()
     this.config = config
@@ -109,7 +120,24 @@ export class BarChart extends Container {
     const titleFontSize = typeof titleLabel.style.fontSize === 'number'
       ? titleLabel.style.fontSize
       : Number.parseFloat(String(titleLabel.style.fontSize ?? 0)) || 0
-    let titleOffset = showTitle ? Math.max(titleLabel.height, titleFontSize) + TITLE_PADDING : 0
+
+    // 副标题（数据来源等）：标题下方一行小字，次要色，并入 titleOffset 让正文整体下移。
+    const showSubtitle = Boolean(config.subtitle?.trim())
+    const subtitleLabel = new Text({
+      text: config.subtitle,
+      style: {
+        fontSize: SUBTITLE_FONT_SIZE,
+        fill: MUTED_LABEL_COLOR,
+        fontFamily: config.fontFamily,
+        align: 'center',
+      },
+    })
+    subtitleLabel.anchor.set(0.5, 0)
+    this.subtitleLabel = subtitleLabel
+
+    const titleExtent = showTitle ? Math.max(titleLabel.height, titleFontSize) : 0
+    const subtitleBlock = showSubtitle ? subtitleLabel.height + (showTitle ? SUBTITLE_GAP : 0) : 0
+    let titleOffset = (showTitle || showSubtitle) ? titleExtent + subtitleBlock + TITLE_PADDING : 0
     this.titleLabel = titleLabel
 
     // center xAxis
@@ -186,11 +214,14 @@ export class BarChart extends Container {
     this.xAxisLabel.visible = hasXAxisLabel
     this.xAxisLabel.renderable = hasXAxisLabel
 
-    titleOffset = showTitle ? Math.max(titleLabel.height, titleFontSize) + TITLE_PADDING : 0
+    titleOffset = (showTitle || showSubtitle) ? titleExtent + subtitleBlock + TITLE_PADDING : 0
     titleLabel.anchor.set(0.5, 0)
     titleLabel.position.set(config.width / 2, 0)
     titleLabel.visible = showTitle
     titleLabel.renderable = showTitle
+    subtitleLabel.position.set(config.width / 2, titleExtent + (showTitle ? SUBTITLE_GAP : 0))
+    subtitleLabel.visible = showSubtitle
+    subtitleLabel.renderable = showSubtitle
 
     smoothTicksAlpha(ticksAlphaMap, config)
     this.ticksComponentMap = ticksComponentMap
@@ -211,6 +242,7 @@ export class BarChart extends Container {
     this.barMain.sortableChildren = true
     this.barMain.addChild(...barComponentMap.values())
     this.addChild(titleLabel)
+    this.addChild(subtitleLabel)
     this.addChild(this.xAxis)
     this.addChild(stepLabel)
     this.addChild(this.barMain)
@@ -223,6 +255,19 @@ export class BarChart extends Container {
     this.frameIdSets = frameIdSets
     this.frameMaxSteps = frameMaxSteps
     this.barZOrder = []
+
+    // 预计算文本变化时间线：让 update(frame) 能纯函数地推出「距上次变化多少帧 → 扰动进度」，
+    // 实时播放 / Remotion 逐帧渲染 / 进度条任意跳转一致可复现（避免依赖逐帧累积的可变状态）。
+    if (config.textScrambleEnabled) {
+      if (config.textScrambleFields.includes('barInfo')) {
+        this.barInfoTimeline = this.buildTextTimeline(data, (d, i, frame) => String(config.getBarInfo(d, i, frame) ?? ''))
+      }
+      // label 隐藏时不渲染左标签，省去这份构建。
+      if (config.showLabel && config.textScrambleFields.includes('label')) {
+        this.labelTimeline = this.buildTextTimeline(data, d => String(d.label ?? ''))
+      }
+    }
+
     if (config.showStepLabel) {
       stepLabel.anchor.set(1, 1)
       stepLabel.position.set(config.width, config.height)
@@ -464,6 +509,68 @@ export class BarChart extends Container {
     return Math.max(0, Math.min(maxRequired, totalAvailable))
   }
 
+  // 按 id 归集某文本维度的「变化点」：逐帧取文本，与该 id 上次取值不同才记一段。空间 O(变化次数)，
+  // 常量文本（如 ticker、label '-'）只占一段，永不触发动画。
+  private buildTextTimeline(
+    data: RankedData[][],
+    getText: (d: RankedData, i: number, frame: number) => string,
+  ): Map<string, TextSegment[]> {
+    const timeline = new Map<string, TextSegment[]>()
+    const lastText = new Map<string, string>()
+    for (const [frame, items] of data.entries()) {
+      for (const [i, d] of items.entries()) {
+        const text = getText(d, i, frame)
+        if (lastText.get(d.id) === text) {
+          continue
+        }
+        lastText.set(d.id, text)
+        let segments = timeline.get(d.id)
+        if (!segments) {
+          segments = []
+          timeline.set(d.id, segments)
+        }
+        segments.push({ frame, text })
+      }
+    }
+    return timeline
+  }
+
+  // 给定帧 idx，推出某 id 当前应显示的文本：处于某次变化后的过渡窗口内则返回扰动中间态，否则返回定型文本。
+  private resolveScrambleText(timeline: Map<string, TextSegment[]>, id: string, idx: number): string {
+    const segments = timeline.get(id)
+    if (!segments || segments.length === 0) {
+      return ''
+    }
+    // 二分找最后一个 frame <= idx 的段。
+    let lo = 0
+    let hi = segments.length - 1
+    let k = 0
+    if (idx < segments[0].frame) {
+      return segments[0].text // 尚未出现（一般 alpha=0 不显示），给首段文本。
+    }
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1
+      if (segments[mid].frame <= idx) {
+        k = mid
+        lo = mid + 1
+      }
+      else {
+        hi = mid - 1
+      }
+    }
+    const seg = segments[k]
+    if (k === 0) {
+      return seg.text // 首段无前驱：首次出现不做扰动（伴随入场淡入即可）。
+    }
+    const dur = this.config.textScrambleDurationFrames
+    const framesSince = idx - seg.frame
+    if (framesSince >= dur) {
+      return seg.text
+    }
+    const progress = dur > 0 ? framesSince / dur : 1
+    return scrambleText(segments[k - 1].text, seg.text, progress, framesSince, id, this.config.textScrambleChars)
+  }
+
   update(idx: number) {
     if (idx >= this.data.length) {
       return
@@ -560,18 +667,26 @@ export class BarChart extends Container {
       const barWidth = widthForValue(d.value)
       const { valueText, extraText, totalWidth } = this.getValueLabelInfo(d, config)
       const canShowValue = totalWidth <= (this.totalAvailableWidth - barWidth)
-      // 不透明度只由纵向位置（blurRank → y）决定：可见区最下面一行（rank=topN-1）及其上方恒为 1；
-      // 越过底边、下沉到画面外停车位（rank=topN）的一格行程内线性衰减到 0。入场柱自下浮起同理淡入。
-      const yAlpha = Math.max(0, Math.min(1, config.topN - d.blurRank))
+      // 不透明度优先取 applyVelocity 预算好的 renderAlpha：满榜入场/退场柱由纵向位置（穿越底边带）淡变，
+      // 未满榜入场柱则就地随 enter ramp 淡入（不靠穿带）。缺省（未经 applyVelocity 的数据）回退到底边带公式：
+      // 可见区最下面一行（rank=topN-1）及以上恒 1，下沉到停车位（rank=topN）的一格行程内线性衰减到 0。
+      const yAlpha = d.renderAlpha ?? Math.max(0, Math.min(1, config.topN - d.blurRank))
+      // barInfo / label 变化时走「重写」动画（时间线已预计算）；未启用则原样直显。
+      const barInfo = this.barInfoTimeline
+        ? this.resolveScrambleText(this.barInfoTimeline, d.id, idx)
+        : config.getBarInfo(d, i, idx)
+      const label = this.labelTimeline
+        ? this.resolveScrambleText(this.labelTimeline, d.id, idx)
+        : d.label
       bar.update({
         y: d.blurRank * (config.barHeight + config.barGap),
-        label: d.label,
+        label,
         width: barWidth,
         alpha: yAlpha,
         color: config.getColor(d),
         valueLabel: canShowValue ? valueText : '',
         extraValueLabel: canShowValue ? extraText : '',
-        barInfo: config.getBarInfo(d, i, idx),
+        barInfo,
         showLabel: config.showLabel,
       })
     }

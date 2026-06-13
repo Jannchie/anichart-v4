@@ -3,6 +3,8 @@ import { blur, median } from 'd3'
 
 // BarChart 与 LineChart 共用的标题 / 坐标轴「外框」样式常量。
 export const TITLE_FONT_SIZE = 36
+export const SUBTITLE_FONT_SIZE = 18 // 标题下方副标题 / 来源行
+export const SUBTITLE_GAP = 8 // 标题与副标题之间的垂直间距
 export const TITLE_PADDING = 24
 export const MUTED_LABEL_COLOR = 0xAA_AA_AA // 刻度文字、轴标签等次要文字
 export const TICK_LINE_COLOR = 0x26_26_2E // 刻度引导线（比原先更淡、略偏冷，弱化网格存在感）
