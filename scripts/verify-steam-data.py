@@ -69,8 +69,6 @@ def store_name(appid: int, cache: dict) -> str | None:
     except (urllib.error.URLError, urllib.error.HTTPError, ValueError, KeyError, TypeError):
         name = None
     cache[key] = name
-    CACHE.parent.mkdir(parents=True, exist_ok=True)
-    CACHE.write_text(json.dumps(cache, ensure_ascii=False))
     time.sleep(0.2)
     return name
 
@@ -98,6 +96,8 @@ def main() -> int:
         ok = na in nb or nb in na or (len(na) >= 4 and len(nb) >= 4 and (na[:6] == nb[:6]))
         if not ok and appid not in KNOWN_OK:
             mismatches.append((appid, en, sn, zh))
+    CACHE.parent.mkdir(parents=True, exist_ok=True)
+    CACHE.write_text(json.dumps(cache, ensure_ascii=False))
     if mismatches:
         print(f'  ⚠ {len(mismatches)} 个疑似 appid 贴错（我的名 ≠ 商店名）:')
         for appid, en, sn, zh in mismatches:
