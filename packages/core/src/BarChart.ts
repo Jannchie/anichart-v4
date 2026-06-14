@@ -12,19 +12,35 @@ import { getValueScale } from './utils/scale'
 import { measureTextWidth } from './utils/textMetrics'
 import { scrambleText } from './utils/textScramble'
 
-// 某条目某段文本恒定的区间起点：{ frame: 该文本生效的首帧, text: 文本 }。相邻段之间即一次「变化」。
-interface TextSegment {
+// 某条目某段恒定值的区间起点：{ frame: 该值生效的首帧, value: 文本 / banner 图 key }。
+// 相邻段之间即一次「变化」——文本是一次扰动重写，banner 图是一次交叉淡入。
+interface Segment {
   frame: number
-  text: string
-}
-
-// 某条目某段 banner 图恒定的区间起点：{ frame: 该图生效的首帧, key: imageField 取值 }。相邻段之间即一次换图（触发交叉淡入）。
-interface ImageSegment {
-  frame: number
-  key: string
+  value: string
 }
 
 const Z_ORDER_HYSTERESIS = 1
+
+// 二分：返回 segments 中最后一个 frame <= idx 的下标；idx 早于首段返回 -1。
+function locateSegmentIndex(segments: Segment[], idx: number): number {
+  if (idx < segments[0].frame) {
+    return -1
+  }
+  let lo = 0
+  let hi = segments.length - 1
+  let k = 0
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1
+    if (segments[mid].frame <= idx) {
+      k = mid
+      lo = mid + 1
+    }
+    else {
+      hi = mid - 1
+    }
+  }
+  return k
+}
 
 // 画一条竖向虚线（刻度引导线）。PIXI Graphics 无原生虚线，按 dash/gap 拆成多段。
 function dashedVerticalLine(g: Graphics, x: number, y0: number, y1: number, dash = 5, gap = 7): void {
@@ -79,9 +95,9 @@ export class BarChart extends Container {
   frameMaxSteps: Array<number | undefined>
   barZOrder: string[]
   // 文本变化时间线（按 id）：仅在 textScramble 开启且对应字段启用时构建，否则为 undefined（走原直显路径）。
-  private barInfoTimeline?: Map<string, TextSegment[]>
-  private labelTimeline?: Map<string, TextSegment[]>
-  private imageTimeline?: Map<string, ImageSegment[]>
+  private barInfoTimeline?: Map<string, Segment[]>
+  private labelTimeline?: Map<string, Segment[]>
+  private imageTimeline?: Map<string, Segment[]>
   constructor(data: RankedData[][], config: Config) {
     super()
     this.config = config
@@ -91,11 +107,11 @@ export class BarChart extends Container {
     const idList = [...new InternSet(data.flat().map(d => d.id))]
     // banner 图按帧可变（imageField 取值随数据变，如 appid 730 在 2023-09 从 CS:GO key 切到 CS2 key）。
     // 预计算每条柱的换图时间线 + 该柱用到的所有图 key→texture，逐帧由 resolveImageState 推出当前/上一张 + 淡入进度。
-    this.imageTimeline = this.buildImageTimeline(data, config)
+    this.imageTimeline = this.buildSegmentTimeline(data, d => String(d.raw?.[config.imageField] ?? ''))
     const idImageTextures = new Map<string, Map<string, Texture>>()
     for (const [id, segments] of this.imageTimeline) {
       const texByKey = new Map<string, Texture>()
-      for (const { key } of segments) {
+      for (const { value: key } of segments) {
         const tex = key ? textureMap.get(key) : undefined
         if (tex) {
           texByKey.set(key, tex)
@@ -285,11 +301,11 @@ export class BarChart extends Container {
     // 实时播放 / Remotion 逐帧渲染 / 进度条任意跳转一致可复现（避免依赖逐帧累积的可变状态）。
     if (config.textScrambleEnabled) {
       if (config.textScrambleFields.includes('barInfo')) {
-        this.barInfoTimeline = this.buildTextTimeline(data, (d, i, frame) => String(config.getBarInfo(d, i, frame) ?? ''))
+        this.barInfoTimeline = this.buildSegmentTimeline(data, (d, i, frame) => String(config.getBarInfo(d, i, frame) ?? ''))
       }
       // label 隐藏时不渲染左标签，省去这份构建。逐帧取 perFrameLabel（支持中途改名），其变化点即触发重写动画。
       if (config.showLabel && config.textScrambleFields.includes('label')) {
-        this.labelTimeline = this.buildTextTimeline(data, d => this.perFrameLabel(d))
+        this.labelTimeline = this.buildSegmentTimeline(data, d => this.perFrameLabel(d))
       }
     }
 
@@ -536,25 +552,27 @@ export class BarChart extends Container {
 
   // 按 id 归集某文本维度的「变化点」：逐帧取文本，与该 id 上次取值不同才记一段。空间 O(变化次数)，
   // 常量文本（如 ticker、label '-'）只占一段，永不触发动画。
-  private buildTextTimeline(
+  // 按 id 归集某个逐帧字符串值（label / barInfo / banner 图 key）的「变化点」：逐帧取值，与上次不同才记一段。
+  // 绝大多数柱该值恒定，只占一段；仅原地改名/换图的（如 appid 730）会有 2 段。
+  private buildSegmentTimeline(
     data: RankedData[][],
-    getText: (d: RankedData, i: number, frame: number) => string,
-  ): Map<string, TextSegment[]> {
-    const timeline = new Map<string, TextSegment[]>()
-    const lastText = new Map<string, string>()
+    getValue: (d: RankedData, i: number, frame: number) => string,
+  ): Map<string, Segment[]> {
+    const timeline = new Map<string, Segment[]>()
+    const last = new Map<string, string>()
     for (const [frame, items] of data.entries()) {
       for (const [i, d] of items.entries()) {
-        const text = getText(d, i, frame)
-        if (lastText.get(d.id) === text) {
+        const value = getValue(d, i, frame)
+        if (last.get(d.id) === value) {
           continue
         }
-        lastText.set(d.id, text)
+        last.set(d.id, value)
         let segments = timeline.get(d.id)
         if (!segments) {
           segments = []
           timeline.set(d.id, segments)
         }
-        segments.push({ frame, text })
+        segments.push({ frame, value })
       }
     }
     return timeline
@@ -570,62 +588,24 @@ export class BarChart extends Container {
   }
 
   // 给定帧 idx，推出某 id 当前应显示的文本：处于某次变化后的过渡窗口内则返回扰动中间态，否则返回定型文本。
-  private resolveScrambleText(timeline: Map<string, TextSegment[]>, id: string, idx: number): string {
+  private resolveScrambleText(timeline: Map<string, Segment[]>, id: string, idx: number): string {
     const segments = timeline.get(id)
     if (!segments || segments.length === 0) {
       return ''
     }
-    // 二分找最后一个 frame <= idx 的段。
-    let lo = 0
-    let hi = segments.length - 1
-    let k = 0
-    if (idx < segments[0].frame) {
-      return segments[0].text // 尚未出现（一般 alpha=0 不显示），给首段文本。
-    }
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1
-      if (segments[mid].frame <= idx) {
-        k = mid
-        lo = mid + 1
-      }
-      else {
-        hi = mid - 1
-      }
+    const k = locateSegmentIndex(segments, idx)
+    // k<0：尚未出现（一般 alpha=0 不显示）；k===0：首段无前驱，首次出现不扰动。两者均给首段文本。
+    if (k <= 0) {
+      return segments[0].value
     }
     const seg = segments[k]
-    if (k === 0) {
-      return seg.text // 首段无前驱：首次出现不做扰动（伴随入场淡入即可）。
-    }
     const dur = this.config.textScrambleDurationFrames
     const framesSince = idx - seg.frame
     if (framesSince >= dur) {
-      return seg.text
+      return seg.value
     }
     const progress = dur > 0 ? framesSince / dur : 1
-    return scrambleText(segments[k - 1].text, seg.text, progress, framesSince, id, this.config.textScrambleChars)
-  }
-
-  // 按 id 归集 banner 图的「变化点」：逐帧取 raw[imageField]，与上次不同才记一段。
-  // 绝大多数柱的图 key 恒定（appid），只占一段、永不淡入；仅 730 这类原地换图的会有 2 段。
-  private buildImageTimeline(data: RankedData[][], config: Config): Map<string, ImageSegment[]> {
-    const timeline = new Map<string, ImageSegment[]>()
-    const lastKey = new Map<string, string>()
-    for (const [frame, items] of data.entries()) {
-      for (const d of items) {
-        const key = String(d.raw?.[config.imageField] ?? '')
-        if (lastKey.get(d.id) === key) {
-          continue
-        }
-        lastKey.set(d.id, key)
-        let segments = timeline.get(d.id)
-        if (!segments) {
-          segments = []
-          timeline.set(d.id, segments)
-        }
-        segments.push({ frame, key })
-      }
-    }
-    return timeline
+    return scrambleText(segments[k - 1].value, seg.value, progress, framesSince, id, this.config.textScrambleChars)
   }
 
   // 给定帧 idx，推出某 id 当前 banner：定型时只有 key；处于换图后的淡入窗口内则额外给 prevKey + fade(0→1)。
@@ -634,32 +614,18 @@ export class BarChart extends Container {
     if (!segments || segments.length === 0) {
       return { fade: 1 }
     }
-    if (idx < segments[0].frame) {
-      return { key: segments[0].key, fade: 1 }
-    }
-    let lo = 0
-    let hi = segments.length - 1
-    let k = 0
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1
-      if (segments[mid].frame <= idx) {
-        k = mid
-        lo = mid + 1
-      }
-      else {
-        hi = mid - 1
-      }
+    const k = locateSegmentIndex(segments, idx)
+    // k<0：尚未出现；k===0：首段无前驱，首次出现不淡入（随入场 alpha 即可）。两者均给首段图、不淡入。
+    if (k <= 0) {
+      return { key: segments[0].value, fade: 1 }
     }
     const seg = segments[k]
-    if (k === 0) {
-      return { key: seg.key, fade: 1 } // 首段无前驱：首次出现不淡入（随入场 alpha 即可）。
-    }
     const dur = this.config.imageCrossfadeDurationFrames
     const framesSince = idx - seg.frame
     if (framesSince >= dur) {
-      return { key: seg.key, fade: 1 }
+      return { key: seg.value, fade: 1 }
     }
-    return { key: seg.key, prevKey: segments[k - 1].key, fade: dur > 0 ? framesSince / dur : 1 }
+    return { key: seg.value, prevKey: segments[k - 1].value, fade: dur > 0 ? framesSince / dur : 1 }
   }
 
   update(idx: number) {
