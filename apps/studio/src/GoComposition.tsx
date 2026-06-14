@@ -294,6 +294,11 @@ export function GoComposition() {
   const topInfo = useRef<TopInfo | undefined>(undefined)
   const { width, height, fps, durationInFrames } = useVideoConfig()
   const [handle] = useState(() => delayRender())
+  const frame = useCurrentFrame()
+  // 渲染时每个并发 chunk 的首帧都以「挂载帧」重新 mount；init 收尾的 update(0) 会让这些帧闪回起始态。
+  // 用 ref 记住当前帧，init 完成时同步渲到该帧（而非 0），消除 chunk 首帧闪烁。
+  const frameRef = useRef(frame)
+  frameRef.current = frame
   useEffect(() => {
     init({
       fps,
@@ -303,10 +308,11 @@ export function GoComposition() {
     }).then((res) => {
       bar.current = res[0] as BarChart
       topInfo.current = res[1] as TopInfo
+      bar.current.update(frameRef.current)
+      topInfo.current.update(frameRef.current)
       continueRender(handle)
     })
   }, [])
-  const frame = useCurrentFrame()
   useEffect(() => {
     if (bar.current && topInfo.current) {
       bar.current.update(frame)
