@@ -3,7 +3,7 @@ import type { Config } from './Config'
 import type { RankedData } from './Data'
 import { blur, extent, InternSet, scaleLinear } from 'd3'
 import { Container, Graphics, Text } from 'pixi.js'
-import { MUTED_LABEL_COLOR, smoothTicksAlpha, TICK_LINE_COLOR, TITLE_FONT_SIZE, TITLE_PADDING } from './utils/chartChrome'
+import { AXIS_TITLE_FONT_SIZE, MUTED_LABEL_COLOR, smoothTicksAlpha, TICK_LINE_COLOR, TITLE_FONT_SIZE, TITLE_PADDING } from './utils/chartChrome'
 import { measureTextWidth } from './utils/textMetrics'
 
 const DEFAULT_X_AXIS_TICK_HEIGHT = 32
@@ -261,7 +261,7 @@ export class LineChart extends Container {
     this.xAxisLabel = new Text({
       text: config.xAxisLabel,
       style: {
-        fontSize: 32,
+        fontSize: AXIS_TITLE_FONT_SIZE,
         fill: MUTED_LABEL_COLOR,
         fontFamily: config.fontFamily,
       },
