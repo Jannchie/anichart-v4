@@ -11,19 +11,22 @@
     "render": "remotion render AniComp out/anichart.mp4",
     "render:aa": "remotion render AA out/aa-silent.mp4 --scale=2 && ffmpeg -y -i out/aa-silent.mp4 -i public/neon-route.wav -c:v copy -c:a aac -b:a 320k -map 0:v:0 -map 1:a:0 -af volume=0.7 -movflags +faststart out/aa-4k.mp4 && rm -f out/aa-silent.mp4",
     "render:aazh": "remotion render AAZh out/aazh-silent.mp4 --scale=2 && ffmpeg -y -i out/aazh-silent.mp4 -i public/neon-route.wav -c:v copy -c:a aac -b:a 320k -map 0:v:0 -map 1:a:0 -af volume=0.7 -movflags +faststart out/aazh-4k.mp4 && rm -f out/aazh-silent.mp4",
+    "render:steamzh": "remotion render SteamZh out/steamzh-silent.mp4 --scale=2 && ffmpeg -y -i out/steamzh-silent.mp4 -i public/skyforge-overdrive-2.wav -c:v copy -c:a aac -b:a 320k -map 0:v:0 -map 1:a:0 -af volume=0.7 -movflags +faststart out/steamzh-4k.mp4 && rm -f out/steamzh-silent.mp4",
     "upgrade": "remotion upgrade",
     "lint": "eslint src",
-    "typecheck": "tsc"
+    "typecheck": "tsc",
+    "render:evzh": "remotion render EVZh out/evzh-silent.mp4 --scale=2 && ffmpeg -y -i out/evzh-silent.mp4 -i public/helios-grid-rising.wav -c:v copy -c:a aac -b:a 320k -map 0:v:0 -map 1:a:0 -af volume=0.7 -movflags +faststart out/evzh-4k.mp4 && rm -f out/evzh-silent.mp4",
+    "render:evzh-vertical": "remotion render EVZhVertical out/evzh-vertical-silent.mp4 --scale=2 && ffmpeg -y -i out/evzh-vertical-silent.mp4 -i public/helios-grid-rising.wav -c:v copy -c:a aac -b:a 320k -map 0:v:0 -map 1:a:0 -af volume=0.7 -movflags +faststart out/evzh-vertical-4k.mp4 && rm -f out/evzh-vertical-silent.mp4"
   },
   "dependencies": {
     "@anichart/core": "workspace:*",
-    "@remotion/cli": "4.0.469",
+    "@remotion/cli": "4.0.477",
     "d3": "^7.9.0",
     "dayjs": "^1.11.21",
     "pixi.js": "^8.18.1",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
-    "remotion": "4.0.469"
+    "remotion": "4.0.477"
   },
   "devDependencies": {
     "@types/d3": "^7.4.3",
