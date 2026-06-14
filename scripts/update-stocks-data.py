@@ -31,10 +31,12 @@
 数据来源需署名 SEC EDGAR（https://www.sec.gov/edgar）与 Yahoo Finance。
 
 用法：
-  python3 scripts/update-stocks-data.py            # 生成 stocks.csv
-  python3 scripts/update-stocks-data.py --logos    # 下载公司 logo（Google favicon）到 public/logos
+  python3 scripts/update-stocks-data.py            # 生成 stocks.csv（仅标准库）
+  BRANDFETCH_CLIENT_ID=xxx python3 scripts/update-stocks-data.py --logos
+                                                   # 取公司 logo（Brandfetch CDN）到 public/logos
 
-依赖：仅标准库。
+依赖：数据生成仅标准库；--logos 额外需要 Pillow + resvg-py（pip 纯 wheel）与 Brandfetch Logo Link
+     client-id（见 download_logos）。
 """
 from __future__ import annotations
 
@@ -43,6 +45,7 @@ import csv
 import datetime as dt
 import io
 import json
+import os
 import re
 import sys
 import time
@@ -134,6 +137,19 @@ def http_json(url: str, retries: int = 3) -> dict:
             req = urllib.request.Request(url, headers=UA)
             with urllib.request.urlopen(req, timeout=30) as resp:
                 return json.load(resp)
+        except Exception:
+            if attempt == retries - 1:
+                raise
+            time.sleep(0.6 * (attempt + 1))
+    raise RuntimeError('unreachable')
+
+
+def http_bytes(url: str, retries: int = 3) -> bytes:
+    for attempt in range(retries):
+        try:
+            req = urllib.request.Request(url, headers=UA)
+            with urllib.request.urlopen(req, timeout=35) as resp:
+                return resp.read()
         except Exception:
             if attempt == retries - 1:
                 raise
@@ -364,28 +380,118 @@ def write_rows(rows: list[dict]) -> None:
         print(f'wrote {len(rows)} rows -> {path.relative_to(REPO)}')
 
 
+# ── 公司 logo：Brandfetch CDN（矢量 SVG 优先，栅格兜底）──────────────────
+# 之前用 Google favicon，但 favicon 是「网站小图标」不是品牌 logo，分辨率乱、近半数糊。
+# 现按域名取 Brandfetch（公开 client-id，非配额制的 Brand API），每家取其 logo 变体：
+#   ① 矢量 SVG → resvg 高分栅格化：原生透明 + 矢量抗锯齿，边缘干净（首选）。
+#   ② 无矢量（只有栅格 webp/png，如 P&G/PepsiCo/McDonald's）或 SVG 无有效尺寸（如 Amazon，
+#      resvg 报错）→ 退到高分栅格 PNG。
+# **全程不抠图/不去底**——矢量与栅格源本就透明，直接转 PNG。
+#
+# 关键坑：Brandfetch 对「品牌没有的变体」不报 404，而是返回占位（'symbol' 的「B」、缺失 light 的
+# 「Brandfetch」字标等），占位也是合法 SVG/透明 PNG、无法可靠靠程序识别。图表背景深色，多数品牌的
+# 默认 logo 是深色版（深背景上隐形），其 'theme/light/logo'（浅色版）才合适——故**默认用
+# theme/light/logo**；少数公司没有真实 light 变体（light 返回占位），在 LOGO_SPEC_OVERRIDE 里点名
+# 回退到默认 'logo'（它们的默认版本身彩色、深背景上可见）。这套 spec 映射是对这 43 家逐个肉眼核验
+# 出来的（universe 固定、极少变动，一次性成本）。
+#
+# 依赖：Pillow + resvg-py（均 pip 纯 wheel，仅此 --logos 路径用）、环境变量 BRANDFETCH_CLIENT_ID
+# （Brandfetch 账号的 Logo Link client-id，公开值，可在 brandfetch 后台取得）。
+BF_SVG = 'https://cdn.brandfetch.io/{domain}/{spec}.svg?c={cid}'
+BF_PNG = 'https://cdn.brandfetch.io/{domain}/w/1024/h/1024/{spec}.png?c={cid}'
+LOGO_RENDER_WIDTH = 1024                        # resvg 栅格化宽度（保纵横比），供降采样得平滑边缘
+LOGO_MAX_SIDE = 512                             # 最终 PNG 最长边上限
+DEFAULT_SPECS = ['theme/light/logo']            # 浅色版，深背景上清晰（多数公司适用）
+# 无真实 light 变体（theme/light/logo 返回占位）的公司 → 用默认彩色 'logo'（已肉眼核验可见）。
+LOGO_SPEC_OVERRIDE = {
+    'Microsoft': ['logo'],
+    'Procter & Gamble': ['logo'],
+    'Home Depot': ['logo'],
+    'Costco': ['logo'],
+    'Chevron': ['logo'],
+    'Bank of America': ['logo'],
+    'Salesforce': ['logo'],
+}
+
+
+def _fetch_logo_svg(domain: str, spec: str, cid: str) -> bytes | None:
+    """取一个变体的矢量 SVG；404/失败、或返回的不是 SVG（个别 logo 实为栅格）时返回 None。"""
+    try:
+        raw = http_bytes(BF_SVG.format(domain=domain, spec=spec, cid=cid))
+    except Exception:
+        return None
+    return raw if b'<svg' in raw[:512] else None
+
+
+def _vector_image(svg: bytes):
+    """resvg 矢量栅格化为 RGBA（保纵横比、原生透明、抗锯齿）。失败抛异常。"""
+    import importlib
+    from PIL import Image
+    resvg = importlib.import_module('resvg_py')        # 动态 import 避免静态缺失依赖告警
+    png = bytes(resvg.svg_to_bytes(svg_string=svg.decode('utf-8'), width=LOGO_RENDER_WIDTH))
+    return Image.open(io.BytesIO(png)).convert('RGBA')
+
+
+def _raster_image(domain: str, spec: str, cid: str):
+    """取高分栅格 PNG 为 RGBA（不抠图）。404/失败返回 None。"""
+    from PIL import Image
+    try:
+        raw = http_bytes(BF_PNG.format(domain=domain, spec=spec, cid=cid))
+    except Exception:
+        return None
+    try:
+        return Image.open(io.BytesIO(raw)).convert('RGBA')
+    except Exception:
+        return None
+
+
+def _finish(im):
+    """裁掉透明边 + 限制最长边到 LOGO_MAX_SIDE。"""
+    from PIL import Image
+    bbox = im.getbbox()
+    if bbox:
+        im = im.crop(bbox)
+    if max(im.size) > LOGO_MAX_SIDE:
+        s = LOGO_MAX_SIDE / max(im.size)
+        im = im.resize((max(1, round(im.width * s)), max(1, round(im.height * s))), Image.Resampling.LANCZOS)
+    return im
+
+
+def _pick_logo(domain: str, company: str, cid: str):
+    """按 spec 顺序取该公司 logo：先试矢量 SVG（resvg 渲染），失败/非矢量则退高分栅格 PNG。
+    返回首个成功的 RGBA 图，全失败返回 None。只请求品牌确有的变体，故不会拿到 Brandfetch 占位。"""
+    for spec in LOGO_SPEC_OVERRIDE.get(company, DEFAULT_SPECS):
+        svg = _fetch_logo_svg(domain, spec, cid)
+        if svg:
+            try:
+                return _finish(_vector_image(svg))
+            except Exception:
+                pass
+        im = _raster_image(domain, spec, cid)
+        if im is not None:
+            return _finish(im)
+    return None
+
+
 def download_logos() -> None:
-    """Google favicon 服务：无 key、彩色、覆盖任意域名。下到 public/logos/<展示名>.png。"""
+    """为 UNIVERSE + SpaceX 取高清透明品牌 logo（Brandfetch CDN），覆盖写入 public/logos/ 并镜像。"""
+    cid = os.environ.get('BRANDFETCH_CLIENT_ID')
+    if not cid:
+        raise SystemExit('需要环境变量 BRANDFETCH_CLIENT_ID（Brandfetch Logo Link client-id）')
     for d in LOGO_DIRS:
         d.mkdir(parents=True, exist_ok=True)
     primary, *mirrors = LOGO_DIRS
     # SpaceX 走独立路径不在 UNIVERSE 里，logo 单独补
     for company, _, domain in [*UNIVERSE, ('SpaceX', 'SPCX', 'spacex.com')]:
+        im = _pick_logo(domain, company, cid)
+        if im is None:
+            print(f'skip {company}: no usable logo from {domain}')
+            continue
         dest = primary / f'{company}.png'
-        if not dest.exists():
-            url = f'https://www.google.com/s2/favicons?domain={domain}&sz=128'
-            try:
-                req = urllib.request.Request(url, headers=UA)
-                with urllib.request.urlopen(req, timeout=20) as resp:
-                    dest.write_bytes(resp.read())
-                print(f'downloaded {dest.name}')
-            except Exception as e:
-                print(f'skip {company}: {e}')
-                continue
+        im.save(dest)
         for m in mirrors:
-            target = m / dest.name
-            if not target.exists() or target.read_bytes() != dest.read_bytes():
-                target.write_bytes(dest.read_bytes())
+            im.save(m / dest.name)
+        print(f'logo {company:18s} <- {domain:24s} {im.size[0]}x{im.size[1]}')
 
 
 def spacex_rows() -> list[dict]:
