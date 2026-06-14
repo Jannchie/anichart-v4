@@ -88,8 +88,8 @@ const config = new Config({
     const colorStr = colors(d.id)
     return colorStr ? Number.parseInt(colorStr.slice(1), 16) : 0x88_88_88
   },
-  // 有 logo 时公司由 icon 表达，bar 上只补 ticker；无 logo 才回退「公司名 (ticker)」。
-  getBarInfo: d => textureMap.has(d.id) ? (d.raw?.ticker ?? d.id) : `${d.id} (${d.raw?.ticker ?? ''})`,
+  // logo 已表达品牌，bar 上补公司名（比 ticker 更易读）；无 logo 才回退「公司名 (ticker)」。
+  getBarInfo: d => textureMap.has(d.id) ? d.id : `${d.id} (${d.raw?.ticker ?? ''})`,
   getValueLabel: d => formatUSD(d.value),
   getTickLabel: v => formatUSD(v),
 })
