@@ -4,13 +4,24 @@ import { BarChart, computeInversionMetrics, DataProcessor, LineChart } from '@an
 import { csv } from 'd3'
 import { Application } from 'pixi.js'
 import { DATASETS } from './datasets'
+import { FONT_STACK, loadFonts } from './fonts'
 import './style.css'
 
 const app = new Application()
 
+// 每个数据集的 config 都套上「Berkeley Mono + HarmonyOS Sans SC」字体栈：拉丁走等宽、汉字按字
+// 回退到 HarmonyOS（否则中文版的 series 名渲染成豆腐块）。字体在建图前由 loadFonts() 加载。
+function makeActiveConfig(ds: typeof DATASETS[number]): Config {
+  const c = ds.makeConfig()
+  c.fontFamily = FONT_STACK
+  return c
+}
+
+// 初始数据集可由 URL ?dataset=<key> 指定（便于直接分享/截图某个数据集），缺省取第一个。
+const initialKey = new URLSearchParams(globalThis.location.search).get('dataset')
 // 当前数据集 / 配置：切换数据集时重建 config（字段映射、配色、文案随之改变）。
-let activeDataset = DATASETS[0]
-let config: Config = activeDataset.makeConfig()
+let activeDataset = DATASETS.find(d => d.key === initialKey) ?? DATASETS[0]
+let config: Config = makeActiveConfig(activeDataset)
 
 type ChartInstance = BarChart | LineChart
 
@@ -256,8 +267,9 @@ function rebuildChart() {
     chart.removeFromParent()
     chart.destroy({ children: true })
   }
-  // 折线图显示分类标签，条形图不显示；标题 / 坐标轴文案由数据集 config 决定。
-  config.showLabel = chartType === 'line'
+  // 折线图总显示分类标签；条形图默认不显示，除非数据集显式声明 showBarLabel（如 Danbooru 系列把
+  // 名字放左侧）。标题 / 坐标轴文案由数据集 config 决定。
+  config.showLabel = chartType === 'line' ? true : (activeDataset.showBarLabel ?? false)
 
   chart = chartType === 'line'
     ? new LineChart(data, config)
@@ -455,7 +467,7 @@ async function loadData() {
 // 切换数据集：重建 config、按当前画布尺寸布局、重新加载并从首帧播放。
 async function loadDataset(next: typeof activeDataset) {
   activeDataset = next
-  config = next.makeConfig()
+  config = makeActiveConfig(next)
   boostSlider.value = config.swapAccelBoost.toString()
   boostLabel.textContent = `boost ${config.swapAccelBoost.toFixed(1)}`
   timeAxisSelect.value = config.lineTimeAxisMode
@@ -495,10 +507,15 @@ boostSlider.addEventListener('input', () => {
 
 ;(async () => {
   try {
-    await app.init({
-      backgroundColor: config.backgroundColor,
-      hello: true,
-    })
+    // 字体必须先于建图就绪：PIXI Text 创建时即按当前可用字体测量，晚加载会让首批文本（尤其汉字）
+    // 按回退字体排版。与 app.init 并行，省一段串行等待。
+    await Promise.all([
+      app.init({
+        backgroundColor: config.backgroundColor,
+        hello: true,
+      }),
+      loadFonts(),
+    ])
 
     canvasContainer.append(app.canvas)
     app.canvas.style.width = '100%'
@@ -515,10 +532,15 @@ boostSlider.addEventListener('input', () => {
     const maxFrame = Math.max(data.length - 1, 0)
     progress.max = maxFrame.toString()
     progress.disabled = data.length === 0
-    currentFrame = 0
+    // URL ?frame=<n|last> 可定格到指定帧并暂停（便于截图/分享某一时刻）。
+    const frameParam = new URLSearchParams(globalThis.location.search).get('frame')
+    const startPaused = frameParam !== null
+    currentFrame = frameParam === 'last'
+      ? maxFrame
+      : Math.min(Math.max(Number(frameParam) || 0, 0), maxFrame)
     rebuildChart()
     renderFrame(currentFrame)
-    setPauseState(false)
+    setPauseState(startPaused)
     syncButtonState()
     syncTimeLabel()
     if (animationFrameId !== undefined) {
