@@ -2,10 +2,11 @@ import type { ScaleLinear } from 'd3'
 import type { Config } from './Config'
 import type { RankedData } from './Data'
 import { blur, extent, InternSet, scaleLinear } from 'd3'
-import { Container, Graphics, Sprite, Text, TextStyle } from 'pixi.js'
+import type { Texture } from 'pixi.js'
+import { Container, Graphics, Text, TextStyle } from 'pixi.js'
 import { BarComponent, EXTRA_VALUE_LABEL_PADDING } from './bar'
 import { textureMap } from './resources'
-import { computeReferenceSpan, MUTED_LABEL_COLOR, smoothTicksAlpha, SUBTITLE_FONT_SIZE, SUBTITLE_GAP, TICK_LINE_COLOR, TITLE_FONT_SIZE, TITLE_PADDING } from './utils/chartChrome'
+import { AXIS_TITLE_FONT_SIZE, computeReferenceSpan, MUTED_LABEL_COLOR, smoothTicksAlpha, SUBTITLE_FONT_SIZE, SUBTITLE_GAP, TICK_LINE_COLOR, TITLE_FONT_SIZE, TITLE_PADDING } from './utils/chartChrome'
 import { getExtraValueLabelFontSize, getValueLabelFontSize } from './utils/labelFonts'
 import { getValueScale } from './utils/scale'
 import { measureTextWidth } from './utils/textMetrics'
@@ -15,6 +16,12 @@ import { scrambleText } from './utils/textScramble'
 interface TextSegment {
   frame: number
   text: string
+}
+
+// 某条目某段 banner 图恒定的区间起点：{ frame: 该图生效的首帧, key: imageField 取值 }。相邻段之间即一次换图（触发交叉淡入）。
+interface ImageSegment {
+  frame: number
+  key: string
 }
 
 const Z_ORDER_HYSTERESIS = 1
@@ -74,6 +81,7 @@ export class BarChart extends Container {
   // 文本变化时间线（按 id）：仅在 textScramble 开启且对应字段启用时构建，否则为 undefined（走原直显路径）。
   private barInfoTimeline?: Map<string, TextSegment[]>
   private labelTimeline?: Map<string, TextSegment[]>
+  private imageTimeline?: Map<string, ImageSegment[]>
   constructor(data: RankedData[][], config: Config) {
     super()
     this.config = config
@@ -81,9 +89,22 @@ export class BarChart extends Container {
     this.tickWidthMap = new Map()
     this.textWidthCache = new Map()
     const idList = [...new InternSet(data.flat().map(d => d.id))]
-    const idImageMap = new Map(new InternSet(data.flat().map((d) => {
-      return [d.id, textureMap.get(d.raw[config.imageField])]
-    })))
+    // banner 图按帧可变（imageField 取值随数据变，如 appid 730 在 2023-09 从 CS:GO key 切到 CS2 key）。
+    // 预计算每条柱的换图时间线 + 该柱用到的所有图 key→texture，逐帧由 resolveImageState 推出当前/上一张 + 淡入进度。
+    this.imageTimeline = this.buildImageTimeline(data, config)
+    const idImageTextures = new Map<string, Map<string, Texture>>()
+    for (const [id, segments] of this.imageTimeline) {
+      const texByKey = new Map<string, Texture>()
+      for (const { key } of segments) {
+        const tex = key ? textureMap.get(key) : undefined
+        if (tex) {
+          texByKey.set(key, tex)
+        }
+      }
+      if (texByKey.size > 0) {
+        idImageTextures.set(id, texByKey)
+      }
+    }
     this.xAxis = new Container()
     this.xAxisTickContainer = new Container()
 
@@ -94,7 +115,7 @@ export class BarChart extends Container {
     this.xAxisLabel = new Text({
       text: config.xAxisLabel,
       style: {
-        fontSize: 32,
+        fontSize: AXIS_TITLE_FONT_SIZE,
         fill: MUTED_LABEL_COLOR,
         fontFamily: config.fontFamily,
       },
@@ -160,23 +181,27 @@ export class BarChart extends Container {
         labelMap.set(item.id, item.label)
       }
     }
-    const maxLabelWidth = config.showLabel ? this.getMaxLabelWidth([...labelMap.values()], config) : 0
+    // 左侧 label 字号与数值标签对齐（0.7×barHeight），不再用满柱高——满柱高会让 label 比数字明显
+    // 粗大、布局笨重。注意它只作用于左侧 label：柱上 value/barInfo 仍由基准 fontSize(=barHeight) 派生，
+    // 不能把这个缩小值当成 BarComponent.fontSize 传进去（否则 value 会被 getValueLabelFontSize 二次缩小）。
+    // 留白宽度也按同一字号算，避免多余左边距。
+    const labelFontSize = getValueLabelFontSize(config.barHeight)
+    const maxLabelWidth = config.showLabel ? this.getMaxLabelWidth([...labelMap.values()], config, labelFontSize) : 0
 
     const barComponentMap = new Map<string, BarComponent>(idList.map((id) => {
-      const imageTexture = idImageMap.get(id)
-      const imgSprite = imageTexture ? Sprite.from(imageTexture) : undefined
       const comp = new BarComponent({
         x: 0,
         y: 0,
         width: 0,
         height: config.barHeight,
         label: labelMap.get(id) ?? '',
-        fontSize: config.barHeight,
+        fontSize: config.barHeight, // 基准字号：柱上 value/barInfo 由它派生（0.7×barHeight）
+        leftLabelFontSize: labelFontSize, // 左侧 label 单独用缩小值（0.7×barHeight），不影响柱上文本
         colorLabel: 0xFF_FF_FF,
         leftLabelPadding: config.leftLabelPadding,
         barInfoPadding: config.barInfoPadding,
         barInfoStyle: config.barInfoStyle,
-        image: imgSprite,
+        imageTextures: idImageTextures.get(id), // 该柱用到的所有 banner（key→texture）；逐帧切 .texture + 交叉淡入
         leftLabelWidth: maxLabelWidth,
         showLabel: config.showLabel,
         valueLabelPadding: config.valueLabelPadding,
@@ -262,9 +287,9 @@ export class BarChart extends Container {
       if (config.textScrambleFields.includes('barInfo')) {
         this.barInfoTimeline = this.buildTextTimeline(data, (d, i, frame) => String(config.getBarInfo(d, i, frame) ?? ''))
       }
-      // label 隐藏时不渲染左标签，省去这份构建。
+      // label 隐藏时不渲染左标签，省去这份构建。逐帧取 perFrameLabel（支持中途改名），其变化点即触发重写动画。
       if (config.showLabel && config.textScrambleFields.includes('label')) {
-        this.labelTimeline = this.buildTextTimeline(data, d => String(d.label ?? ''))
+        this.labelTimeline = this.buildTextTimeline(data, d => this.perFrameLabel(d))
       }
     }
 
@@ -433,13 +458,13 @@ export class BarChart extends Container {
     return { ticksAlphaMap, ticksComponentMap }
   }
 
-  private getMaxLabelWidth(labels: string[], config: Config) {
+  private getMaxLabelWidth(labels: string[], config: Config, fontSize: number) {
     if (labels.length === 0) {
       return 0
     }
     const style = new TextStyle({
       fontFamily: config.fontFamily,
-      fontSize: config.barHeight,
+      fontSize,
     })
     let maxLabelWidth = 0
     // 计算最大的 label 宽度
@@ -535,6 +560,15 @@ export class BarChart extends Container {
     return timeline
   }
 
+  // 逐帧左侧 label：优先取 raw[labelField]（允许同一条柱中途改名——身份由 id 维持、显示名随数据变，
+  // 如 appid 730：2023 前「反恐精英：全球攻势」、之后「反恐精英 2」原地重写），回退到固定 d.label。
+  // labelField 为空（label 配成函数）或该帧 raw 缺列时退回 d.label，行为与改动前一致。
+  private perFrameLabel(d: RankedData): string {
+    const field = this.config.labelField
+    const v = field ? d.raw?.[field] : undefined
+    return String(v ?? d.label ?? '')
+  }
+
   // 给定帧 idx，推出某 id 当前应显示的文本：处于某次变化后的过渡窗口内则返回扰动中间态，否则返回定型文本。
   private resolveScrambleText(timeline: Map<string, TextSegment[]>, id: string, idx: number): string {
     const segments = timeline.get(id)
@@ -569,6 +603,63 @@ export class BarChart extends Container {
     }
     const progress = dur > 0 ? framesSince / dur : 1
     return scrambleText(segments[k - 1].text, seg.text, progress, framesSince, id, this.config.textScrambleChars)
+  }
+
+  // 按 id 归集 banner 图的「变化点」：逐帧取 raw[imageField]，与上次不同才记一段。
+  // 绝大多数柱的图 key 恒定（appid），只占一段、永不淡入；仅 730 这类原地换图的会有 2 段。
+  private buildImageTimeline(data: RankedData[][], config: Config): Map<string, ImageSegment[]> {
+    const timeline = new Map<string, ImageSegment[]>()
+    const lastKey = new Map<string, string>()
+    for (const [frame, items] of data.entries()) {
+      for (const d of items) {
+        const key = String(d.raw?.[config.imageField] ?? '')
+        if (lastKey.get(d.id) === key) {
+          continue
+        }
+        lastKey.set(d.id, key)
+        let segments = timeline.get(d.id)
+        if (!segments) {
+          segments = []
+          timeline.set(d.id, segments)
+        }
+        segments.push({ frame, key })
+      }
+    }
+    return timeline
+  }
+
+  // 给定帧 idx，推出某 id 当前 banner：定型时只有 key；处于换图后的淡入窗口内则额外给 prevKey + fade(0→1)。
+  private resolveImageState(id: string, idx: number): { key?: string, prevKey?: string, fade: number } {
+    const segments = this.imageTimeline?.get(id)
+    if (!segments || segments.length === 0) {
+      return { fade: 1 }
+    }
+    if (idx < segments[0].frame) {
+      return { key: segments[0].key, fade: 1 }
+    }
+    let lo = 0
+    let hi = segments.length - 1
+    let k = 0
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1
+      if (segments[mid].frame <= idx) {
+        k = mid
+        lo = mid + 1
+      }
+      else {
+        hi = mid - 1
+      }
+    }
+    const seg = segments[k]
+    if (k === 0) {
+      return { key: seg.key, fade: 1 } // 首段无前驱：首次出现不淡入（随入场 alpha 即可）。
+    }
+    const dur = this.config.imageCrossfadeDurationFrames
+    const framesSince = idx - seg.frame
+    if (framesSince >= dur) {
+      return { key: seg.key, fade: 1 }
+    }
+    return { key: seg.key, prevKey: segments[k - 1].key, fade: dur > 0 ? framesSince / dur : 1 }
   }
 
   update(idx: number) {
@@ -677,7 +768,9 @@ export class BarChart extends Container {
         : config.getBarInfo(d, i, idx)
       const label = this.labelTimeline
         ? this.resolveScrambleText(this.labelTimeline, d.id, idx)
-        : d.label
+        : this.perFrameLabel(d)
+      // banner：定型时给当前 key；换图淡入窗口内额外给 prevKey + fade，由 BarComponent 双 sprite 交叉淡入。
+      const { key: imageKey, prevKey: imagePrevKey, fade: imageFade } = this.resolveImageState(d.id, idx)
       bar.update({
         y: d.blurRank * (config.barHeight + config.barGap),
         label,
@@ -688,6 +781,9 @@ export class BarChart extends Container {
         extraValueLabel: canShowValue ? extraText : '',
         barInfo,
         showLabel: config.showLabel,
+        imageKey,
+        imagePrevKey,
+        imageFade,
       })
     }
     for (const [id, bar] of this.barComponentMap.entries()) {

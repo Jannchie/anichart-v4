@@ -81,6 +81,7 @@ export interface ConfigInput {
   value?: FieldOrAccessor<number>
   color?: FieldOrAccessor<number | undefined>
   image?: string // 取图片用的 raw 列名
+  imageCrossfadeSec?: number // 同一条柱 imageField 值变化（如 appid 730：CS:GO→CS2 换 banner）时的交叉淡入时长（秒），默认 0.3
 
   // 文本格式化回调。
   getValueLabel?: (d: any, i?: number) => any
@@ -205,6 +206,9 @@ export class Config {
   textScrambleChars: string
   textScrambleFields: Array<'barInfo' | 'label'>
 
+  // ---- banner 交叉淡入（imageField 值变化时）----
+  imageCrossfadeDurationFrames: number // 从 imageCrossfadeSec × fps 派生
+
   // ---- 柱体布局 ----
   barGap: number
   barHeight: number
@@ -310,6 +314,9 @@ export class Config {
     this.textScrambleDurationFrames = Math.max(1, Math.round((textScramble.durationSec ?? 0.6) * this.fps))
     this.textScrambleChars = textScramble.chars ?? DEFAULT_SCRAMBLE_CHARS
     this.textScrambleFields = textScramble.fields ?? ['barInfo', 'label']
+
+    // banner 交叉淡入时长：秒×fps 派生（至少 1 帧），保证不同 fps 下过渡时长一致。
+    this.imageCrossfadeDurationFrames = Math.max(1, Math.round((input.imageCrossfadeSec ?? 0.3) * this.fps))
 
     // ---- 柱体布局 ----
     this.barGap = input.barGap ?? 4

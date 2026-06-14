@@ -1,5 +1,5 @@
-import type { Sprite } from 'pixi.js'
-import { Container, Graphics, Text } from 'pixi.js'
+import type { Texture } from 'pixi.js'
+import { Container, Graphics, Sprite, Text } from 'pixi.js'
 import { getExtraValueLabelFontSize, getValueLabelFontSize } from './utils/labelFonts'
 
 export const EXTRA_VALUE_LABEL_PADDING = 8
@@ -46,7 +46,8 @@ interface BarItemSettings {
   label: string
   color: number
   fontFamily: string
-  fontSize: number
+  fontSize: number // 基准字号（=柱高）：柱上 value / barInfo 由它派生（getValueLabelFontSize）
+  leftLabelFontSize?: number // 左侧 label 字号，独立于 fontSize（默认跟随 fontSize）
   colorLabel: number
   barInfo: string
   colorBarInfo: number
@@ -59,7 +60,10 @@ interface BarItemSettings {
   leftLabelWidth?: number
   alpha: number
   radius: number
-  image?: Sprite
+  imageTextures?: Map<string, Texture> // 该柱可用的所有 banner（key→texture）；逐帧按 imageKey 切 .texture
+  imageKey?: string // 当前帧 banner 的 key（imageField 取值）
+  imagePrevKey?: string // 交叉淡入窗口内的上一张 banner key（垫在底层）
+  imageFade?: number // 当前 banner 的淡入进度 0→1（1=完全显示，无淡入）
   autoBarHeight: boolean
   showLabel: boolean
 
@@ -73,7 +77,11 @@ export class BarComponent extends Container {
   valueLabel: Text
   settings: BarItemSettings
   bar: Container
-  image?: Sprite
+  imageTop?: Sprite // 当前 banner（交叉淡入时在上层，alpha=fade）
+  imageUnder?: Sprite // 上一张 banner（交叉淡入时垫底，alpha=1）
+  private imageTextures?: Map<string, Texture>
+  private lastTopKey?: string
+  private lastUnderKey?: string
   barItem: Graphics
   extraValueLabel: Text
   valueContainer: Container
@@ -116,7 +124,7 @@ export class BarComponent extends Container {
     this.leftLabel = new Text({
       style: {
         fontFamily: settings.fontFamily,
-        fontSize: settings.fontSize,
+        fontSize: settings.leftLabelFontSize ?? settings.fontSize,
         fill: settings.colorLabel,
       },
     })
@@ -173,9 +181,30 @@ export class BarComponent extends Container {
     this.barInfoContainer.mask = this.barItemMask
     this.bar.addChild(this.barInfoContainer)
     this.addChild(this.bar, this.leftLabel)
-    if (settings.image) {
-      this.image = settings.image
-      this.barInfoContainer.addChild(this.image)
+    if (settings.imageTextures && settings.imageTextures.size > 0) {
+      this.imageTextures = settings.imageTextures
+      // 两张 sprite 常驻：under 先加（底层）、top 后加（上层）；纹理逐帧按 key 切，避免每帧重建 sprite。
+      this.imageUnder = new Sprite()
+      this.imageTop = new Sprite()
+      this.imageUnder.visible = false
+      this.imageTop.visible = false
+      this.barInfoContainer.addChild(this.imageUnder, this.imageTop)
+    }
+  }
+
+  // 把一张 banner sprite 按 barInfoStyle 缩放并定位（top/under 共用，二者完全重叠以做交叉淡入）。
+  private layoutImageSprite(sprite: Sprite, height: number, style: 'default' | 'reverse', barInfoTextWidth: number, barInfoPadding: number): void {
+    const tex = sprite.texture
+    const aspectRatio = tex.height > 0 ? tex.width / tex.height : 1
+    if (style === 'reverse') {
+      sprite.height = height * REVERSE_IMAGE_SCALE
+      sprite.width = height * REVERSE_IMAGE_SCALE * aspectRatio
+      sprite.position.set(0, height / 2 - sprite.height / 2)
+    }
+    else {
+      sprite.height = height
+      sprite.width = height * aspectRatio
+      sprite.position.set(barInfoTextWidth + barInfoPadding, height / 2 - sprite.height / 2)
     }
   }
 
@@ -195,40 +224,48 @@ export class BarComponent extends Container {
     const width = this.settings.width ?? 0
     const height = this.settings.height ?? 0
 
-    const image = this.settings.image
-    if (image) {
-      const aspectRatio = image.width / image.height
-      switch (this.settings.barInfoStyle) {
-        case 'default': {
-          image.height = this.settings.height
-          image.width = this.settings.height * aspectRatio
-          break
-        }
-        case 'reverse': {
-          image.height = this.settings.height * REVERSE_IMAGE_SCALE
-          image.width = this.settings.height * aspectRatio * REVERSE_IMAGE_SCALE
-        }
+    // banner 交叉淡入：imageTop=当前图（alpha=fade），imageUnder=上一张（alpha=1 垫底）；二者完全重叠，
+    // top 由透明渐显盖住 under 即完成换图。绝大多数柱 fade 恒为 1（无换图），只显示 top。
+    const textures = this.imageTextures
+    const imageKey = this.settings.imageKey
+    const imageFade = this.settings.imageFade ?? 1
+    const barInfoStyle = this.settings.barInfoStyle
+    const curTex = (textures && imageKey) ? textures.get(imageKey) : undefined
+    let imageWidth = 0
+    if (this.imageTop && curTex) {
+      if (this.lastTopKey !== imageKey) {
+        this.imageTop.texture = curTex
+        this.lastTopKey = imageKey
       }
-      barInfoContainer.position.set(width - barInfoText.width - image.width - barInfoPadding, 0)
+      this.imageTop.visible = true
+      this.imageTop.alpha = imageFade
+      this.layoutImageSprite(this.imageTop, height, barInfoStyle, barInfoText.width, barInfoPadding)
+      imageWidth = this.imageTop.width
+      const prevKey = this.settings.imagePrevKey
+      const prevTex = (textures && prevKey) ? textures.get(prevKey) : undefined
+      if (this.imageUnder && prevTex && imageFade < 1) {
+        if (this.lastUnderKey !== prevKey) {
+          this.imageUnder.texture = prevTex
+          this.lastUnderKey = prevKey
+        }
+        this.imageUnder.visible = true
+        this.imageUnder.alpha = 1
+        this.layoutImageSprite(this.imageUnder, height, barInfoStyle, barInfoText.width, barInfoPadding)
+      }
+      else if (this.imageUnder) {
+        this.imageUnder.visible = false
+      }
     }
     else {
-      barInfoContainer.position.set(width - barInfoText.width - barInfoPadding, 0)
-    }
-    switch (this.settings.barInfoStyle) {
-      case 'default': {
-        barInfoText.position.set(0, height / 2)
-        if (image) {
-          image.position.set(barInfoText.width + barInfoPadding, height / 2 - image.height / 2)
-        }
-        break
+      if (this.imageTop) {
+        this.imageTop.visible = false
       }
-      case 'reverse': {
-        barInfoText.position.set((image?.width ?? 0) + barInfoPadding, height / 2)
-        if (image) {
-          image.position.set(0, height / 2 - image.height / 2)
-        }
+      if (this.imageUnder) {
+        this.imageUnder.visible = false
       }
     }
+    barInfoContainer.position.set(width - barInfoText.width - imageWidth - barInfoPadding, 0)
+    barInfoText.position.set(barInfoStyle === 'reverse' ? imageWidth + barInfoPadding : 0, height / 2)
 
     let leftLabelWidth = this.settings.leftLabelWidth
 
@@ -305,8 +342,12 @@ export class BarComponent extends Container {
     this.extraValueLabel.position.set(this.valueLabel.x + this.valueLabel.width + EXTRA_VALUE_LABEL_PADDING, height / 2)
     this.position.set(x, y)
     this.alpha = this.settings.alpha
-    // 柱宽趋零时数值标签随之淡出，避免「只剩数字、没有柱子」的孤立标签：条目少或榜尾入场时
-    // value≈当前最短 → width≈0，而 bar 整体仍不透明。柱宽达到约一个柱高即完全显示。
-    this.valueContainer.alpha = Math.max(0, Math.min(1, width / Math.max(1, height)))
+    // 标签透明度只跟随整体入场/出场（settings.alpha），不再与柱宽挂钩——此前柱宽趋零时把左右标签
+    // 一起淡出（widthFade = width/height），会让短柱（榜尾 / 小国）的国名和数值半透明、观感差。
+    // 现固定全不透明；入场期的「无柱浮动标签」由 settings.alpha 的整体淡入兜底。
+    this.valueContainer.alpha = 1
+    if (showLabel) {
+      this.leftLabel.alpha = 1
+    }
   }
 }
