@@ -26,7 +26,9 @@ apps/*/public/fonts/
 apps/studio/public/*.wav
 apps/*/public/*-*.csv
 apps/*/public/stocks.csv
+apps/*/public/steam.csv
 scripts/__pycache__/
+scripts/.cache/
 scripts/data/
 
 # Editor directories and files
