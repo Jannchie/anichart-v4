@@ -193,7 +193,6 @@ export class LineChart extends Container {
   private readonly data: RankedData[][]
   private readonly config: Config
   private readonly frameValueScales: ScaleLinear<number, number>[] = []
-  private readonly frameIdSets: InternSet<string>[] = []
   private readonly frameMaxSteps: Array<number | undefined> = []
   private readonly ticksAlphaMap: Map<number, number[]> = new Map()
   private readonly ticksComponentMap: Map<number, Container> = new Map()
@@ -540,7 +539,6 @@ export class LineChart extends Container {
       }
       frameMinValues[f] = lo
       frameMaxValues[f] = hi
-      this.frameIdSets[f] = new InternSet(frame.map(item => item.id))
       // 同帧所有 item 共享 step（fillRank 写入），取首个即可。
       this.frameMaxSteps[f] = frame.length > 0 ? frame[0].step : undefined
     }

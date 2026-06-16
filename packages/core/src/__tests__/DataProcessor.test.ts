@@ -1083,3 +1083,66 @@ describe('dataprocessor.lookahead 与底边淡变带限速', () => {
     expect(frames.at(-1)!.find(d => d.id === 'E')!.blurRank).toBeCloseTo(0, 2)
   })
 })
+
+const assignZOrder = (DataProcessor as any).assignZOrder as (config: Config, result: RankedData[][]) => void
+
+function makeRanked(id: string, blurRank: number): RankedData {
+  return { id, label: id, value: 0, step: 0, alpha: 1, raw: {}, rank: 0, blurRank }
+}
+
+describe('dataprocessor.assignzorder', () => {
+  // lead = round(0.175 · durationSec · fps) = 8 帧；合成短序列里前瞻落到末帧，便于断言「终将在上者全程在上」。
+  const config = new Config({ swap: { durationSec: 0.8 }, fps: 60 })
+  const z = (result: RankedData[][], t: number, id: string) =>
+    result[t].find(d => d.id === id)!.zIndex!
+
+  it('上浮者（前瞻排名更靠上）在交叉全程稳居上层', () => {
+    // A 匀速上浮（blurRank 递减到 0=顶），B 匀速下沉。前瞻看到 A 终将在上 → A 全程在上层、盖住 B。
+    const blursA = [2, 1.5, 1, 0.5, 0]
+    const blursB = [0, 0.5, 1, 1.5, 2]
+    const result: RankedData[][] = blursA.map((ba, t) => [makeRanked('A', ba), makeRanked('B', blursB[t])])
+    assignZOrder(config, result)
+    for (let t = 0; t < result.length; t++) {
+      expect(z(result, t, 'A')).toBeGreaterThan(z(result, t, 'B'))
+    }
+  })
+
+  it('前瞻：当前仍在下方、但即将上浮超过对方的柱，提前获得上层（不在脱离重叠时突变）', () => {
+    // A 全程位于 B 下方（blurRank 更大），但持续上浮、末帧超过静止的 B。
+    const blursA = [5, 4, 3, 2, 1]
+    const result: RankedData[][] = blursA.map(ba => [makeRanked('A', ba), makeRanked('B', 2)])
+    assignZOrder(config, result)
+    // 即便 f0 时 A 远在下方，前瞻已知 A 将盖过 B → A 提前在上层。
+    expect(z(result, 0, 'A')).toBeGreaterThan(z(result, 0, 'B'))
+  })
+
+  it('每帧 zindex 是 0..n-1 的排列', () => {
+    const result: RankedData[][] = [
+      [makeRanked('A', 0), makeRanked('B', 1), makeRanked('C', 2)],
+      [makeRanked('A', 1), makeRanked('B', 0), makeRanked('C', 2)],
+    ]
+    assignZOrder(config, result)
+    for (const frame of result) {
+      const zs = frame.map(d => d.zIndex!).sort((a, b) => a - b)
+      expect(zs).toEqual([0, 1, 2])
+    }
+  })
+
+  it('重叠期间相对 z 不逆变（即使位置在重叠中越过对方）', () => {
+    // A、B 全程垂直重叠（|Δblur| 始终 < 1）：A 缓慢下沉、B 不动，A 的位置在中途越过 B。
+    // 一旦重叠即锁定相对层级 —— z 顺序整段恒定，绝不反转。
+    const T = 40
+    const result: RankedData[][] = []
+    for (let t = 0; t < T; t++) {
+      const aBlur = 0.6 * (t / (T - 1)) // 0 → 0.6，中途越过静止的 B=0.3
+      result.push([makeRanked('A', aBlur), makeRanked('B', 0.3)])
+    }
+    assignZOrder(config, result)
+    const sign0 = Math.sign(z(result, 0, 'A') - z(result, 0, 'B'))
+    expect(sign0).not.toBe(0)
+    for (let t = 1; t < T; t++) {
+      // 全程重叠（构造保证 |Δblur| ≤ 0.3 < 1），相对 z 必须与首帧一致。
+      expect(Math.sign(z(result, t, 'A') - z(result, t, 'B'))).toBe(sign0)
+    }
+  })
+})

@@ -14,15 +14,14 @@ import { scrambleText } from './utils/textScramble'
 
 // 某条目某段恒定值的区间起点：{ frame: 该值生效的首帧, value: 文本 / banner 图 key }。
 // 相邻段之间即一次「变化」——文本是一次扰动重写，banner 图是一次交叉淡入。
-interface Segment {
+// （与 DataProcessor 的同名数据段 Segment 无关，故用独立名 TimelineSegment 避免跨文件混淆。）
+interface TimelineSegment {
   frame: number
   value: string
 }
 
-const Z_ORDER_HYSTERESIS = 1
-
 // 二分：返回 segments 中最后一个 frame <= idx 的下标；idx 早于首段返回 -1。
-function locateSegmentIndex(segments: Segment[], idx: number): number {
+function locateSegmentIndex(segments: TimelineSegment[], idx: number): number {
   if (idx < segments[0].frame) {
     return -1
   }
@@ -91,13 +90,11 @@ export class BarChart extends Container {
   extraValueLabelStyle: TextStyle
   frameValueScales: ScaleLinear<number, number>[]
   referenceSpan: number = 0
-  frameIdSets: InternSet<string>[]
   frameMaxSteps: Array<number | undefined>
-  barZOrder: string[]
   // 文本变化时间线（按 id）：仅在 textScramble 开启且对应字段启用时构建，否则为 undefined（走原直显路径）。
-  private barInfoTimeline?: Map<string, Segment[]>
-  private labelTimeline?: Map<string, Segment[]>
-  private imageTimeline?: Map<string, Segment[]>
+  private barInfoTimeline?: Map<string, TimelineSegment[]>
+  private labelTimeline?: Map<string, TimelineSegment[]>
+  private imageTimeline?: Map<string, TimelineSegment[]>
   constructor(data: RankedData[][], config: Config) {
     super()
     this.config = config
@@ -125,7 +122,7 @@ export class BarChart extends Container {
     this.xAxisTickContainer = new Container()
 
     // 每帧值域 scale / id 集合 / 最大 step + adaptive 参考尺度，预计算到帧数组。
-    const { frameValueScales, frameIdSets, frameMaxSteps, referenceSpan } = this.buildFrameScales(data, config)
+    const { frameValueScales, frameMaxSteps, referenceSpan } = this.buildFrameScales(data, config)
     this.referenceSpan = referenceSpan
 
     this.xAxisLabel = new Text({
@@ -293,9 +290,7 @@ export class BarChart extends Container {
     this.xAxis.position.set(axisOffset, titleOffset)
     this.barComponentMap = barComponentMap
     this.frameValueScales = frameValueScales
-    this.frameIdSets = frameIdSets
     this.frameMaxSteps = frameMaxSteps
-    this.barZOrder = []
 
     // 预计算文本变化时间线：让 update(frame) 能纯函数地推出「距上次变化多少帧 → 扰动进度」，
     // 实时播放 / Remotion 逐帧渲染 / 进度条任意跳转一致可复现（避免依赖逐帧累积的可变状态）。
@@ -324,7 +319,6 @@ export class BarChart extends Container {
   // 平滑只用来让值域变化更顺，最终 domain 仍包住当帧真实 max（否则上升中的榜首会被 clamp）。
   private buildFrameScales(data: RankedData[][], config: Config) {
     const frameValueScales: ScaleLinear<number, number>[] = []
-    const frameIdSets: InternSet<string>[] = []
     const frameMaxSteps: Array<number | undefined> = []
     const frameMinValues: number[] = []
     const frameMaxValues: number[] = []
@@ -335,7 +329,6 @@ export class BarChart extends Container {
       const safeMax = Number.isFinite(max) ? Number(max) : 0
       frameMinValues[i] = softFrameMin(emerging, safeMax)
       frameMaxValues[i] = safeMax
-      frameIdSets[i] = new InternSet(d.map(item => item.id))
       let maxStep: number | undefined
       for (const item of d) {
         if (item.alpha <= 0) {
@@ -405,7 +398,7 @@ export class BarChart extends Container {
       }
     }
 
-    return { frameValueScales, frameIdSets, frameMaxSteps, referenceSpan }
+    return { frameValueScales, frameMaxSteps, referenceSpan }
   }
 
   // 构建刻度组件（文字 + 引导线）与每帧 alpha 序列；副作用：写入 tickLabelHeight / tickWidthMap，
@@ -557,8 +550,8 @@ export class BarChart extends Container {
   private buildSegmentTimeline(
     data: RankedData[][],
     getValue: (d: RankedData, i: number, frame: number) => string,
-  ): Map<string, Segment[]> {
-    const timeline = new Map<string, Segment[]>()
+  ): Map<string, TimelineSegment[]> {
+    const timeline = new Map<string, TimelineSegment[]>()
     const last = new Map<string, string>()
     for (const [frame, items] of data.entries()) {
       for (const [i, d] of items.entries()) {
@@ -588,7 +581,7 @@ export class BarChart extends Container {
   }
 
   // 给定帧 idx，推出某 id 当前应显示的文本：处于某次变化后的过渡窗口内则返回扰动中间态，否则返回定型文本。
-  private resolveScrambleText(timeline: Map<string, Segment[]>, id: string, idx: number): string {
+  private resolveScrambleText(timeline: Map<string, TimelineSegment[]>, id: string, idx: number): string {
     const segments = timeline.get(id)
     if (!segments || segments.length === 0) {
       return ''
@@ -657,60 +650,6 @@ export class BarChart extends Container {
       }
       tickComp.position.set(valueScale(tick) * this.maxBarWidth - width / 2, 0)
     }
-    let barIdSet = this.frameIdSets[idx]
-    if (!barIdSet) {
-      barIdSet = new InternSet(data.map(d => d.id))
-      this.frameIdSets[idx] = barIdSet
-    }
-    // 维护全局 z-order：按 blurRank 升序排列；越靠后 zIndex 越高 → 原本位置越下方的 bar 渲染越上层，
-    // 等价于"上升者覆盖下降者"。bubble sort 带 hysteresis，仅当相邻 bar 已错开 > HYS 时才允许交换，
-    // 重叠中（即使方向反转）层叠顺序保持稳定。
-    const blurRankMap = new Map<string, number>()
-    for (const d of data) {
-      blurRankMap.set(d.id, d.blurRank)
-    }
-    const knownInOrder = new Set(this.barZOrder)
-    for (const d of data) {
-      if (knownInOrder.has(d.id)) {
-        continue
-      }
-      let insertIdx = this.barZOrder.length
-      for (let k = 0; k < this.barZOrder.length; k += 1) {
-        const otherBlur = blurRankMap.get(this.barZOrder[k])
-        if (otherBlur === undefined) {
-          continue
-        }
-        if (d.blurRank < otherBlur) {
-          insertIdx = k
-          break
-        }
-      }
-      this.barZOrder.splice(insertIdx, 0, d.id)
-      knownInOrder.add(d.id)
-    }
-    let swapped = true
-    while (swapped) {
-      swapped = false
-      for (let i = 0; i < this.barZOrder.length - 1; i += 1) {
-        const ba = blurRankMap.get(this.barZOrder[i])
-        const bb = blurRankMap.get(this.barZOrder[i + 1])
-        if (ba === undefined || bb === undefined) {
-          continue
-        }
-        if (ba > bb + Z_ORDER_HYSTERESIS) {
-          const tmp = this.barZOrder[i]
-          this.barZOrder[i] = this.barZOrder[i + 1]
-          this.barZOrder[i + 1] = tmp
-          swapped = true
-        }
-      }
-    }
-    for (let i = 0; i < this.barZOrder.length; i += 1) {
-      const bar = this.barComponentMap.get(this.barZOrder[i])
-      if (bar) {
-        bar.zIndex = i
-      }
-    }
     // 宽度直接由 bar 自己的 value 通过 valueScale 算出 —— width 跟 value 严格绑定（横向），
     // y 跟 blurRank 严格绑定（纵向）。两者解耦，避免新模型下 visualOrder lag 导致的"宽度跟数值脱节"。
     // 入场/出场期间 value=0 时 width=0 自然不可见。
@@ -721,6 +660,9 @@ export class BarChart extends Container {
     }
     for (const [i, d] of data.entries()) {
       const bar = this.barComponentMap.get(d.id)!
+      // 渲染层级直接取预计算的 zIndex（assignZOrder：上浮快者覆盖、重叠期锁定，frame 的纯函数）。
+      // 缺省（手造数据未经 DataProcessor）回退到 value 名次 i，至少给一个稳定层级。
+      bar.zIndex = d.zIndex ?? i
       const barWidth = widthForValue(d.value)
       const { valueText, extraText, totalWidth } = this.getValueLabelInfo(d, config)
       const canShowValue = totalWidth <= (this.totalAvailableWidth - barWidth)
@@ -751,11 +693,6 @@ export class BarChart extends Container {
         imagePrevKey,
         imageFade,
       })
-    }
-    for (const [id, bar] of this.barComponentMap.entries()) {
-      if (!barIdSet.has(id)) {
-        bar.update({ alpha: 0 })
-      }
     }
     if (this.config.showStepLabel) {
       const maxStep = this.frameMaxSteps[idx]

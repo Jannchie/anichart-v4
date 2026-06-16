@@ -38,6 +38,42 @@ function easeInOutCubic(x: number): number {
 
 const lerp = (a: number, b: number, t: number): number => a + (b - a) * t
 
+// 二分定位：返回夹住 step 的两个相邻数据点 [a, b]（pts 按 step 升序）。单点段两者相同。
+// interpolateInSegment（取插值 value）与 rawNearStep（取就近 raw）共用，消除两处重复的二分括定。
+function locateBracket(pts: Data[], step: number): readonly [Data, Data] {
+  if (pts.length === 1) {
+    return [pts[0], pts[0]]
+  }
+  let lo = 0
+  let hi = pts.length - 1
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1
+    if (pts[mid].step <= step) {
+      lo = mid
+    }
+    else {
+      hi = mid
+    }
+  }
+  return [pts[lo], pts[hi]]
+}
+
+// assignZOrder 排序键比较：返回 >0 表示 a 应在 b 之上（更大 zIndex / 盖住 b）。前瞻 blurRank 小
+// （将上浮到更上方）者在上；前瞻相等再按当前 blurRank、id 兜底，保证全序稳定、无环。
+function compareZOrder(a: string, b: string, futureBlur: Map<string, number>, curBlur: Map<string, number>): number {
+  const fa = futureBlur.get(a)!
+  const fb = futureBlur.get(b)!
+  if (fa !== fb) {
+    return fb - fa
+  }
+  const ca = curBlur.get(a)!
+  const cb = curBlur.get(b)!
+  if (ca !== cb) {
+    return cb - ca
+  }
+  return a < b ? 1 : (a > b ? -1 : 0)
+}
+
 export class DataProcessor {
   static async processCSV(path: string, config: Config): Promise<RankedData[][]> {
     const rawData = await csv(path)
@@ -84,7 +120,109 @@ export class DataProcessor {
     }
     const result = DataProcessor.fillRank(stepList, samplers, baselineScale, transitionSteps, carrySteps, config)
     DataProcessor.addTailingFrames(config, result)
+    // z-order 必须在 swap 算法（addTailingFrames 内）定下 blurRank 之后算，它消费逐帧（及前瞻）blurRank。
+    DataProcessor.assignZOrder(config, result)
     return result
+  }
+
+  // 离线预计算渲染层级（写入 RankedData.zIndex，越大越上层 / 越靠前盖住别人）：前瞻定序 + 重叠冻结。
+  //   排序键 = 「前瞻 blurRank」（未来 lead 帧 ≈ 半个 1-rank 行程的位置）：未来排名更靠上（正在上浮、
+  //   即将盖过别人）的柱给更高层级。但相对顺序只允许在两柱「当前不重叠」时改变 —— 一旦垂直重叠
+  //   （|ΔblurRank| < 1）就锁定其相对 z 直到重新分开。两者合起来：
+  //     · 前瞻在「进入重叠之前」就把上浮者排到上层（解决纯瞬时速度「速度差等到重叠才拉开、上浮者反被锁下层」的时机问题）；
+  //     · 重叠冻结保证重叠期相对 z 不逆变（不会两柱挨着却层级来回翻 / 闪烁）。
+  //   冒泡每次只交换一对相邻元素，单次交换仅改变「被交换的那一对」的相对顺序；而交换前提是二者不重叠，
+  //   故任意一对的相对 z 只可能在它们不重叠时改变 → 重叠期间严格不逆变（含 A-B、B-C 重叠的链式重叠簇，整簇锁定）。
+  //
+  // 为什么放离线预计算而非 BarChart.update：键依赖未来帧 blurRank、且顺序逐帧从上一帧继承（有状态），
+  //   按帧序跑一次即可固化进 RankedData，update(frame) 仍只读不算、是 frame 的纯函数 —— Remotion 并发分块
+  //   跳任意帧、进度条 scrub 都得到同一层叠，不在 chunk 接缝处闪跳。
+  private static assignZOrder(config: Config, result: RankedData[][]) {
+    const T = result.length
+    if (T === 0 || result[0].length === 0) {
+      return
+    }
+    // 前瞻帧数：约一个完整 1-rank 行程（1-rank 实际耗时 ≈ 0.35·swapDurationSec）。要取整行程而非半行程：
+    // 重叠冻结要求在「进入重叠之前的最后一个不重叠帧」就排定顺序，故前瞻必须够远、越过交叉点看到换位
+    // 完成后谁在上方（半行程的前瞻只到交叉点、两柱位置相等，分不出上浮者，会把它锁在下层）。
+    const lead = Math.max(1, Math.round(0.35 * Math.max(1e-6, config.swapDurationSec) * config.fps))
+    const futureBlur = new Map<string, number>()
+    const curBlur = new Map<string, number>()
+    const order: string[] = [] // 下层→上层（index 即 zIndex），逐帧从上一帧继承以实现重叠冻结
+
+    for (let t = 0; t < T; t++) {
+      const frame = result[t]
+      const future = result[Math.min(T - 1, t + lead)]
+      futureBlur.clear()
+      for (const d of future) {
+        futureBlur.set(d.id, d.blurRank)
+      }
+      curBlur.clear()
+      for (const d of frame) {
+        curBlur.set(d.id, d.blurRank)
+        // 前瞻帧可能缺该 id（理论上每帧全量、不会发生），回退到当前 blurRank。
+        if (!futureBlur.has(d.id)) {
+          futureBlur.set(d.id, d.blurRank)
+        }
+      }
+      // 同步 order 与当帧 id 集合：每帧本是全量 sampler（集合恒定），仍做增删以防御非全量情形。
+      if (order.length === 0) {
+        for (const d of frame) {
+          order.push(d.id)
+        }
+      }
+      else {
+        const present = new Set<string>()
+        for (const d of frame) {
+          present.add(d.id)
+        }
+        const known = new Set(order)
+        let w = 0
+        for (const id of order) {
+          if (present.has(id)) {
+            order[w] = id
+            w++
+          }
+        }
+        order.length = w
+        for (const d of frame) {
+          if (!known.has(d.id)) {
+            order.push(d.id)
+          }
+        }
+      }
+      if (t === 0) {
+        // 首帧无「重叠不逆变」约束（没有上一帧可继承）：直接按前瞻键全排序定下初始层叠。
+        order.sort((a, b) => compareZOrder(a, b, futureBlur, curBlur))
+      }
+      else {
+        // 冻结冒泡：只交换「当前不重叠」的相邻逆序对（前瞻键判逆序），重叠相邻对保持顺序 → 重叠期不逆变。
+        let swapped = true
+        while (swapped) {
+          swapped = false
+          for (let i = 0; i < order.length - 1; i++) {
+            const lower = order[i]
+            const upper = order[i + 1]
+            const overlap = Math.abs(curBlur.get(lower)! - curBlur.get(upper)!) < 1
+            if (!overlap && compareZOrder(lower, upper, futureBlur, curBlur) > 0) {
+              order[i] = upper
+              order[i + 1] = lower
+              swapped = true
+            }
+          }
+        }
+      }
+      const byId = new Map<string, RankedData>()
+      for (const d of frame) {
+        byId.set(d.id, d)
+      }
+      for (const [i, id] of order.entries()) {
+        const d = byId.get(id)
+        if (d) {
+          d.zIndex = i
+        }
+      }
+    }
   }
 
   private static fillRank(
@@ -338,7 +476,7 @@ export class DataProcessor {
           return {
             value: lerp(baseline, target.value, eased),
             alpha: eased,
-            raw: { ...target.raw },
+            raw: target.raw,
             entering: true,
           }
         }
@@ -352,7 +490,7 @@ export class DataProcessor {
           return {
             value: lerp(source.value, baseline, eased),
             alpha: 1 - eased,
-            raw: { ...source.raw },
+            raw: source.raw,
           }
         }
       }
@@ -365,23 +503,7 @@ export class DataProcessor {
   }
 
   private static interpolateInSegment(seg: Segment, step: number): number {
-    const pts = seg.points
-    if (pts.length === 1) {
-      return pts[0].value
-    }
-    let lo = 0
-    let hi = pts.length - 1
-    while (hi - lo > 1) {
-      const mid = (lo + hi) >> 1
-      if (pts[mid].step <= step) {
-        lo = mid
-      }
-      else {
-        hi = mid
-      }
-    }
-    const a = pts[lo]
-    const b = pts[hi]
+    const [a, b] = locateBracket(seg.points, step)
     if (a.step === b.step) {
       return a.value
     }
@@ -392,29 +514,15 @@ export class DataProcessor {
     return lerp(a.value, b.value, t)
   }
 
+  // raw 一律按引用返回（不再 spread 克隆）：下游（getColor/getBarInfo/getValueLabel/取图）全是只读，
+  // 全仓无对 d.raw 的写入。此前每个可见 bar 每帧都克隆一份内容相同的 raw，是 O(帧×bar) 的纯分配浪费。
   private static rawNearStep(seg: Segment, step: number): any {
-    const pts = seg.points
-    if (pts.length === 1) {
-      return { ...pts[0].raw }
-    }
-    let lo = 0
-    let hi = pts.length - 1
-    while (hi - lo > 1) {
-      const mid = (lo + hi) >> 1
-      if (pts[mid].step <= step) {
-        lo = mid
-      }
-      else {
-        hi = mid
-      }
-    }
-    const a = pts[lo]
-    const b = pts[hi]
+    const [a, b] = locateBracket(seg.points, step)
     if (a.step === b.step) {
-      return { ...a.raw }
+      return a.raw
     }
     const t = (step - a.step) / (b.step - a.step)
-    return { ...(t > 0.5 ? b.raw : a.raw) }
+    return t > 0.5 ? b.raw : a.raw
   }
 
   private static nearestRaw(segments: Segment[], step: number): any {
@@ -423,18 +531,18 @@ export class DataProcessor {
     }
     const first = segments[0]
     if (step <= first.firstStep) {
-      return { ...first.points[0].raw }
+      return first.points[0].raw
     }
     const last = segments.at(-1)!
     if (step >= last.lastStep) {
-      return { ...last.points.at(-1)!.raw }
+      return last.points.at(-1)!.raw
     }
     for (let i = 1; i < segments.length; i++) {
       const prev = segments[i - 1]
       const next = segments[i]
       if (step > prev.lastStep && step < next.firstStep) {
         const mid = (prev.lastStep + next.firstStep) / 2
-        return { ...(step < mid ? prev.points.at(-1)!.raw : next.points[0].raw) }
+        return step < mid ? prev.points.at(-1)!.raw : next.points[0].raw
       }
     }
     return null
