@@ -212,6 +212,26 @@ const countryCode = new Map<string, string>([
   ['DR Congo', 'cd'],
   ['Ukraine', 'ua'],
   ['Israel', 'il'],
+  // wb-poverty 贫困 race 新增的极端贫困人口大国（多为撒哈拉以南非洲）
+  ['Tanzania', 'tz'],
+  ['Mozambique', 'mz'],
+  ['Uganda', 'ug'],
+  ['Kenya', 'ke'],
+  ['Madagascar', 'mg'],
+  ['Niger', 'ne'],
+  ['Zambia', 'zm'],
+  ['Malawi', 'mw'],
+  ['Angola', 'ao'],
+  ['Ghana', 'gh'],
+  ["Côte d'Ivoire", 'ci'],
+  ['Burkina Faso', 'bf'],
+  ['Mali', 'ml'],
+  ['South Sudan', 'ss'],
+  ['Burundi', 'bi'],
+  ['Nepal', 'np'],
+  ['Myanmar', 'mm'],
+  ['Yemen', 'ye'],
+  ['Colombia', 'co'],
 ])
 
 // 英文国名 → 中文名（中文版 GDP 用 getBarInfo 显示；id 仍用英文做稳定键 / 国旗 / 配色）。
@@ -253,6 +273,25 @@ const countryZh = new Map<string, string>([
   ['DR Congo', '刚果（金）'],
   ['Ukraine', '乌克兰'],
   ['Israel', '以色列'],
+  ['Tanzania', '坦桑尼亚'],
+  ['Mozambique', '莫桑比克'],
+  ['Uganda', '乌干达'],
+  ['Kenya', '肯尼亚'],
+  ['Madagascar', '马达加斯加'],
+  ['Niger', '尼日尔'],
+  ['Zambia', '赞比亚'],
+  ['Malawi', '马拉维'],
+  ['Angola', '安哥拉'],
+  ['Ghana', '加纳'],
+  ["Côte d'Ivoire", '科特迪瓦'],
+  ['Burkina Faso', '布基纳法索'],
+  ['Mali', '马里'],
+  ['South Sudan', '南苏丹'],
+  ['Burundi', '布隆迪'],
+  ['Nepal', '尼泊尔'],
+  ['Myanmar', '缅甸'],
+  ['Yemen', '也门'],
+  ['Colombia', '哥伦比亚'],
 ])
 
 // 国旗：4:3 SVG 画进 canvas（bar 按柱高缩放并保留宽高比），keyed by 英文国名（=id/raw.country），
@@ -327,8 +366,38 @@ function formatTWh(v: number): string {
   return `${numberFmt.format(Math.round(v))} TWh`
 }
 
+// 大洲配色：与 studio EVCompositionZh.tsx 一致（深色背景、互不撞色、避开中红/美蓝）。
+// 比 color:'region' 的 d3 ordinal 稳定——后者按首次出现顺序分配、切数据集会漂移。
+const REGION_COLOR: Record<string, number> = {
+  Asia: 0x2E_A8_8A, // 玉青
+  Europe: 0x7A_6A_D8, // 靛紫
+  'North America': 0xE0_7B_2E, // 橙
+  'South America': 0x5C_B0_4C, // 雨林绿
+  Oceania: 0x30_B8_D8, // 海洋青
+  Africa: 0xF2_C0_37, // 金（EV 表无此项，为非洲主导的贫困 race 新增）
+}
+
+// 中国红 / 美国蓝两条主线高亮（取国旗色）；其余国家按大洲走 REGION_COLOR。
+function regionColor(d: any): number {
+  if (d.id === 'China') {
+    return 0xDE_29_10 // 五星红旗红
+  }
+  if (d.id === 'United States') {
+    return 0x3D_5A_C9 // 星条旗蓝（提亮）
+  }
+  return REGION_COLOR[String(d.raw?.region ?? '')] ?? 0x88_88_88
+}
+
 // fmt(v, zh)：中文走万/亿（Intl），英文沿用 B/M/T；CO₂(Gt/Mt) 与 TWh 是科学单位，两语言一致。
-interface WbMetric { titleZh: string, titleEn: string, xZh: string, xEn: string, fmt: (v: number, zh: boolean) => string }
+// projectedFrom：该年起的值含官方预测（仅贫困用），step label 标「含预测」。
+// subtitle：副标题（范围 + 来源），EV 风格。leftLabel：国名放左侧 label、柱上只挂国旗（EV 风格）。
+interface WbMetric {
+  titleZh: string, titleEn: string, xZh: string, xEn: string
+  fmt: (v: number, zh: boolean) => string
+  projectedFrom?: number
+  subtitleZh?: string, subtitleEn?: string
+  leftLabel?: boolean
+}
 const WB_METRICS: Record<string, WbMetric> = {
   population: { titleZh: '各国人口', titleEn: 'Population by Country', xZh: '人口', xEn: 'Population', fmt: (v, zh) => zh ? zhCompact(v) : formatPop(v) },
   co2: { titleZh: '各国 CO₂ 排放', titleEn: 'CO₂ Emissions by Country', xZh: 'CO₂ 排放（百万吨）', xEn: 'CO₂ Emissions (Mt)', fmt: v => formatCO2(v) },
@@ -338,6 +407,16 @@ const WB_METRICS: Record<string, WbMetric> = {
   solar: { titleZh: '各国太阳能发电', titleEn: 'Solar Generation by Country', xZh: '太阳能发电（TWh）', xEn: 'Solar Generation (TWh)', fmt: v => formatTWh(v) },
   wind: { titleZh: '各国风能发电', titleEn: 'Wind Generation by Country', xZh: '风能发电（TWh）', xEn: 'Wind Generation (TWh)', fmt: v => formatTWh(v) },
   ev: { titleZh: '各国新能源车销量', titleEn: 'Electric Car Sales by Country', xZh: '新能源车年销量', xEn: 'Electric Car Sales (per year)', fmt: v => numberFmt.format(v) },
+  // 各国极端贫困人口（World Bank PIP，$3/天 2021 PPP）。中国 1981≈9.6 亿 → 2019 起 0；2023+ 含官方预测。
+  poverty: {
+    titleZh: '各国极端贫困人口', titleEn: 'Extreme Poverty by Country',
+    xZh: '极端贫困人口（$3/天 2021 PPP）', xEn: 'People in Extreme Poverty ($3/day, 2021 PPP)',
+    fmt: (v, zh) => zh ? zhCompact(v) : formatPop(v),
+    projectedFrom: 2023,
+    subtitleZh: '全球极端贫困 1981–2025 · World Bank PIP（$3/天 2021 PPP）· 2023+ 为预测',
+    subtitleEn: 'Extreme poverty 1981–2025 · World Bank PIP ($3/day, 2021 PPP) · 2023+ projected',
+    leftLabel: true,
+  },
 }
 
 function makeWbConfig(metric: keyof typeof WB_METRICS, zh: boolean): Config {
@@ -346,15 +425,22 @@ function makeWbConfig(metric: keyof typeof WB_METRICS, zh: boolean): Config {
     id: 'country',
     step: 'year',
     value: 'value',
-    color: 'region',
-    label: '-',
-    image: 'country', // 柱上：国名（中文版走 countryZh）+ 国旗，与 GDP 一致
+    color: regionColor,
+    // EV 风格(leftLabel)：国名放左侧 label、柱上只留国旗；否则国名挂柱上(getBarInfo)、不显左 label。
+    label: m.leftLabel
+      ? (zh ? (d: any) => countryZh.get(d.country) ?? String(d.country ?? '') : (d: any) => String(d.country ?? ''))
+      : '-',
+    image: 'country',
     topN: 15,
     valueScale: { type: 'from-zero' },
     xAxisLabel: zh ? m.xZh : m.xEn,
     title: zh ? m.titleZh : m.titleEn,
-    getStepLabel: step => String(Math.round(step)),
-    getBarInfo: zh ? (d: any) => countryZh.get(d.id) ?? d.id : undefined,
+    subtitle: zh ? m.subtitleZh : m.subtitleEn,
+    getStepLabel: (step) => {
+      const y = Math.round(step)
+      return m.projectedFrom && y >= m.projectedFrom ? `${y}（含预测）` : String(y)
+    },
+    getBarInfo: m.leftLabel ? () => '' : (zh ? (d: any) => countryZh.get(d.id) ?? d.id : undefined),
     getValueLabel: d => m.fmt(d.value, zh),
     getTickLabel: v => m.fmt(v, zh),
   })
@@ -912,6 +998,8 @@ export const DATASETS: DatasetDef[] = [
   { key: 'wb-wind-zh', label: '各国风能发电（中文）', file: '/wb-wind.csv', loadAssets: loadCountryFlags, makeConfig: () => makeWbConfig('wind', true) },
   { key: 'wb-ev', label: '各国新能源车销量', file: '/wb-ev.csv', loadAssets: loadCountryFlags, makeConfig: () => makeWbConfig('ev', false) },
   { key: 'wb-ev-zh', label: '各国新能源车销量（中文）', file: '/wb-ev.csv', loadAssets: loadCountryFlags, makeConfig: () => makeWbConfig('ev', true) },
+  { key: 'wb-poverty', label: '各国极端贫困人口', file: '/wb-poverty.csv', loadAssets: loadCountryFlags, showBarLabel: true, makeConfig: () => makeWbConfig('poverty', false) },
+  { key: 'wb-poverty-zh', label: '各国极端贫困人口（中文）', file: '/wb-poverty.csv', loadAssets: loadCountryFlags, showBarLabel: true, makeConfig: () => makeWbConfig('poverty', true) },
   {
     // Steam 热门游戏同时在线人数，数据来自 scripts/update-steam-data.py（SteamCharts 月均在线）。
     // 游戏名长 → 左侧 label；配色按 appid（raw.appid）查游戏主题色。
@@ -966,21 +1054,24 @@ export const DATASETS: DatasetDef[] = [
   ...makeDanbooruDatasets(),
 ]
 
-interface DanbooruOpts { zh: boolean, growth: boolean, kind: 'series' | 'character' }
+interface DanbooruOpts { zh: boolean, growth: boolean, kind: 'series' | 'character', sfw?: boolean }
 
-function makeDanbooruConfig({ zh, growth, kind }: DanbooruOpts): Config {
+function makeDanbooruConfig({ zh, growth, kind, sfw = false }: DanbooruOpts): Config {
   const noun = kind === 'character' ? (zh ? '角色' : 'Characters') : (zh ? '作品' : 'Series')
-  const title = zh
+  const sfwTag = sfw ? (zh ? ' · SFW' : ' (SFW)') : ''
+  const title = (zh
     ? (growth ? `Danbooru ${noun}年度投稿热度` : `Danbooru ${noun}投稿数`)
-    : (growth ? `Danbooru Trailing-Year New Posts by ${noun}` : `Danbooru Posts by ${noun}`)
+    : (growth ? `Danbooru Trailing-Year New Posts by ${noun}` : `Danbooru Posts by ${noun}`)) + sfwTag
   const xAxisLabel = zh
     ? (growth ? '近一年新增投稿数' : '累计投稿数')
     : (growth ? 'New posts · trailing 12 mo' : 'Cumulative Posts')
-  const src = kind === 'character'
+  // SFW 版仅计 general+sensitive 分级（排除 questionable/explicit）。
+  const sfwNote = sfw ? (zh ? '，仅 SFW（general+sensitive）' : ', SFW only (general + sensitive)') : ''
+  const src = (kind === 'character'
     ? (zh ? '数据来源：Danbooru · 角色标签' : 'Source: Danbooru · character tags')
     : (zh
         ? '数据来源：Danbooru · 版权标签，已合并同系列、排除「原创」'
-        : 'Source: Danbooru · copyright tags, same-series merged, excl. "original"')
+        : 'Source: Danbooru · copyright tags, same-series merged, excl. "original"')) + sfwNote
   return new Config({
     id: 'tag', // 稳定主键用规范 tag：引擎/配色都按它合并。显示名走 label，避免别名同名时颜色横跳。
     label: 'series', // 左侧 label = 显示名（CSV 的 series 列）；与 id 解耦，故别名同 series 名也不冲突
@@ -1013,6 +1104,15 @@ function makeDanbooruDatasets(): DatasetDef[] {
     { key: 'danbooru-character-zh', label: 'Danbooru 角色投稿数（中文）', file: '/danbooru-character-zh.csv', opts: { zh: true, growth: false, kind: 'character' } },
     { key: 'danbooru-character-growth', label: 'Danbooru 角色增速', file: '/danbooru-character-growth.csv', opts: { zh: false, growth: true, kind: 'character' } },
     { key: 'danbooru-character-growth-zh', label: 'Danbooru 角色增速（中文）', file: '/danbooru-character-growth-zh.csv', opts: { zh: true, growth: true, kind: 'character' } },
+    // SFW 版（仅 general+sensitive，排除 questionable/explicit）：与上面一一对应，文件名插 -sfw。
+    { key: 'danbooru-series-sfw', label: 'Danbooru 作品投稿数（SFW）', file: '/danbooru-series-sfw.csv', opts: { zh: false, growth: false, kind: 'series', sfw: true } },
+    { key: 'danbooru-series-sfw-zh', label: 'Danbooru 作品投稿数（SFW·中文）', file: '/danbooru-series-sfw-zh.csv', opts: { zh: true, growth: false, kind: 'series', sfw: true } },
+    { key: 'danbooru-growth-sfw', label: 'Danbooru 投稿增速（SFW）', file: '/danbooru-series-growth-sfw.csv', opts: { zh: false, growth: true, kind: 'series', sfw: true } },
+    { key: 'danbooru-growth-sfw-zh', label: 'Danbooru 投稿增速（SFW·中文）', file: '/danbooru-series-growth-sfw-zh.csv', opts: { zh: true, growth: true, kind: 'series', sfw: true } },
+    { key: 'danbooru-character-sfw', label: 'Danbooru 角色投稿数（SFW）', file: '/danbooru-character-sfw.csv', opts: { zh: false, growth: false, kind: 'character', sfw: true } },
+    { key: 'danbooru-character-sfw-zh', label: 'Danbooru 角色投稿数（SFW·中文）', file: '/danbooru-character-sfw-zh.csv', opts: { zh: true, growth: false, kind: 'character', sfw: true } },
+    { key: 'danbooru-character-growth-sfw', label: 'Danbooru 角色增速（SFW）', file: '/danbooru-character-growth-sfw.csv', opts: { zh: false, growth: true, kind: 'character', sfw: true } },
+    { key: 'danbooru-character-growth-sfw-zh', label: 'Danbooru 角色增速（SFW·中文）', file: '/danbooru-character-growth-sfw-zh.csv', opts: { zh: true, growth: true, kind: 'character', sfw: true } },
   ]
   return variants.map(v => ({
     key: v.key,
