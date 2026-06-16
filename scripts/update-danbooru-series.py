@@ -21,6 +21,14 @@ fate_(series)…；idolmaster_cinderella_girls…；pokemon_sv…），且有 ta
 （默认 12=近一年滚动，最耐看；按月窗太抖故弃用）。能看谁正当红、死掉的系列会自然淡出。两个榜各出
 中英两版，一次 --from-cache 全产出。
 
+SFW 过滤：扫描时按 post 的 rating 分桶缓存（g/s/q/e 四级），故一份缓存能同时派生「全部 rating」
+（ALL）与「仅 SFW」（SFW_RATINGS=g+s，对齐 safebooru.donmai.us）两套，无需为 SFW 单独重扫。
+SFW 版文件名插 `-sfw`（如 danbooru-series-sfw.csv、danbooru-series-growth-sfw-zh.csv）。口径取 g+s
+对 2023 年制度迁移鲁棒：老制度 s=safe、新制度新增 g 而 s 改指 sensitive，但 q/e 在两个时代恒为
+NSFW，故「排除 q/e」的桶边界含义一致（若改成仅 g，2023 前的安全内容当时多标 s，会被错杀）。
+注意：top-N 选取仍按全部 rating 的近似频率（见 select_groups），故某个 SFW 占比极高但总量在
+top-N 之外的系列可能缺席 SFW 榜；调大 --top-n 可放宽。
+
 CSV 列：series（显示名，中/英两版不同）, tag（规范系列键，两版一致，datasets.ts 按它查主题色）,
 count（值）, date（Unix 秒，月 1 号）。
 
@@ -107,10 +115,19 @@ _MERGE = True
 _BLOCKLIST: set[str] = set()
 
 
-def out_paths(base: str) -> dict[str, list[Path]]:
-    pub = ('apps/playground/public', 'apps/studio/public')
-    return {k: [REPO / d / f'{base}{sfx}.csv' for d in pub] for k, sfx in
-            (('en', ''), ('zh', '-zh'), ('gen', '-growth'), ('gzh', '-growth-zh'))}
+PUB_DIRS = ('apps/playground/public', 'apps/studio/public')
+
+# SFW 口径：保留的 rating（Danbooru 四级制 g=general / s=sensitive / q=questionable / e=explicit）。
+# 取 g+s（对齐 safebooru.donmai.us）。对 2023 年的制度迁移鲁棒：老制度 s=safe、新制度新增 g 而 s 改指
+# sensitive，但两个时代里 q/e 始终是 NSFW，故「排除 q/e」这条桶边界在新旧数据上含义一致。改这里即换阈值
+# （如仅 ('g',) 最严格），无需重扫——缓存按 rating 分桶存了全部四级。
+SFW_RATINGS = ('g', 's')
+
+
+def out_file(base: str, *, growth: bool, sfw: bool, zh: bool) -> list[Path]:
+    """输出 CSV 路径（playground + studio 两份）。后缀顺序固定 -growth → -sfw → -zh。"""
+    sfx = ('-growth' if growth else '') + ('-sfw' if sfw else '') + ('-zh' if zh else '')
+    return [REPO / d / f'{base}{sfx}.csv' for d in PUB_DIRS]
 
 # 同系列合并规则：(规范键, 英文名, 中文名, [标签前缀...])。
 # group_of(tag)：命中任一前缀 → 规范键；否则标签独立成组。前缀都挑过、不会误伤其它系列。
@@ -253,28 +270,33 @@ def name_zh(key: str, nm: dict) -> str:
 
 
 def scan(db: Path, selected: list[str], batch_size: int, limit: int | None) -> dict:
-    """单遍扫描 posts，按 (year-month, 规范系列键) 计数，每稿对每个系列至多 +1（去重）。"""
+    """单遍扫描 posts，按 (year-month, 规范系列键, rating) 计数，每稿对每个系列至多 +1（去重）。
+
+    cell 存 rating→count 的小字典（rating 缺失记为 '?'，计入总量但不算 SFW），一次扫描即可派生
+    ALL（全部 rating 求和）与 SFW（仅 SFW_RATINGS）两套，无需为 SFW 单独重扫。"""
     keep = set(selected)
-    monthly: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    monthly: dict[str, dict[str, dict[str, int]]] = \
+        defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
     conn = sqlite3.connect(f'file:{db}?mode=ro', uri=True)
     try:
         total = conn.execute('SELECT COUNT(*) FROM posts').fetchone()[0]
         if limit is not None:
             total = min(total, limit)
-        cur = conn.execute(f'SELECT created_at, {_COLUMN} FROM posts')
+        cur = conn.execute(f'SELECT created_at, rating, {_COLUMN} FROM posts')
         seen, t0 = 0, time.time()
         while True:
             rows = cur.fetchmany(batch_size)
             if not rows:
                 break
-            for created_at, tagstr in rows:
+            for created_at, rating, tagstr in rows:
                 if not (created_at and tagstr and YM_RE.match(created_at)):
                     continue
                 groups = {g for t in tagstr.split() if (g := group_of(t)) in keep}
                 if groups:
                     bucket = monthly[created_at[:7]]
+                    r = rating or '?'
                     for g in groups:
-                        bucket[g] += 1
+                        bucket[g][r] += 1
             seen += len(rows)
             rate = seen / (time.time() - t0 or 1)
             sys.stderr.write(f'\r  scanned {seen:,}/{total:,}  ({rate:,.0f} rows/s)')
@@ -305,6 +327,23 @@ def ym_to_unix(ym: str) -> int:
     return calendar.timegm((int(ym[:4]), int(ym[5:7]), 1, 0, 0, 0, 0, 0, 0))
 
 
+def cell_count(cell, ratings: tuple[str, ...] | None) -> int:
+    """单月单系列的投稿数：ratings=None 取全部 rating 之和；否则仅取这些 rating。
+
+    兼容旧缓存（cell 为 int 总量，无 rating 分级）：直接返回，调用方对旧缓存不应传 ratings。"""
+    if isinstance(cell, dict):
+        return sum(cell.get(r, 0) for r in ratings) if ratings else sum(cell.values())
+    return cell  # 旧格式：int 即总量
+
+
+def cache_has_ratings(monthly: dict) -> bool:
+    """新缓存的 cell 是 rating→count 字典；旧缓存是 int 总量（无法派生 SFW）。"""
+    for keyed in monthly.values():
+        for cell in keyed.values():
+            return isinstance(cell, dict)
+    return True
+
+
 def series_values(deltas: list[int], metric: str, window: int) -> list[int]:
     """逐月 value：cumulative=累计和；trailing=滚动 window 月新增和（当前投稿速度）。"""
     cum, cums = 0, []
@@ -322,7 +361,8 @@ def usable_months(monthly: dict) -> list[str]:
     抓取常发生在月中，当月投稿数会骤降（如 2026-06 只有上月的 ~12%），月度增速榜里会让最后一帧
     所有柱断崖式塌方、严重误导。判据：末月总量 < 前三个完整月中位数的一半 → 视为不完整，剔除。"""
     months = month_range(list(monthly.keys()))
-    vol = {ym: sum(monthly.get(ym, {}).values()) for ym in months}
+    # 末月完整性判据按总量（与 rating 无关，是抓取时机问题），ALL/SFW 共用同一月轴便于对比。
+    vol = {ym: sum(cell_count(c, None) for c in monthly.get(ym, {}).values()) for ym in months}
     while len(months) > 4:
         ref = sorted(vol[m] for m in months[-4:-1])[1]  # 前三个月的中位数
         if ref > 0 and vol[months[-1]] < 0.5 * ref:
@@ -333,12 +373,12 @@ def usable_months(monthly: dict) -> list[str]:
 
 
 def build_rows(monthly: dict, selected: list[str], metric: str, name_fn, nm: dict,
-               window: int = TRAILING_WINDOW) -> list[dict]:
+               ratings: tuple[str, ...] | None = None, window: int = TRAILING_WINDOW) -> list[dict]:
     months = usable_months(monthly)
     rows: list[dict] = []
     for key in selected:
         display = name_fn(key, nm)
-        deltas = [monthly.get(ym, {}).get(key, 0) for ym in months]
+        deltas = [cell_count(monthly.get(ym, {}).get(key, {}), ratings) for ym in months]
         values = series_values(deltas, metric, window)
         # 只发「活跃区间」[首个>0, 末个>0]：累计榜末尾恒>0 即到末月；增速榜里死掉的系列自然淡出。
         nz = [i for i, v in enumerate(values) if v > 0]
@@ -371,7 +411,7 @@ def main() -> None:
     freq_csv = args.freq_csv or fld['freq']
     name_map = args.name_map or fld['name_map']
     cache_path = args.cache or REPO / f"scripts/data/{fld['out']}-monthly.json"
-    out = out_paths(fld['out'])
+    base = fld['out']
 
     if args.from_cache:
         if not cache_path.exists():
@@ -400,13 +440,20 @@ def main() -> None:
         return
 
     nm = json.loads(name_map.read_text(encoding='utf-8')) if name_map.exists() else {}
-    # 一份缓存出两个榜：累计总量榜 + 增速榜，各出中英两版。
-    for metric, out_en, out_zh in (('cumulative', out['en'], out['zh']),
-                                   ('trailing', out['gen'], out['gzh'])):
-        print(f'[{metric}] English:')
-        write_rows(build_rows(monthly, selected, metric, name_en, nm), out_en)
-        print(f'[{metric}] 中文:')
-        write_rows(build_rows(monthly, selected, metric, name_zh, nm), out_zh)
+    # 一份缓存出全部变体：{累计, 增速} × {ALL 全部 rating, SFW 仅 g+s} × {英, 中}。
+    # SFW 需 rating 分级缓存；旧缓存（int cell）只出 ALL，并提示重扫。
+    safeties = [('all', None)]
+    if cache_has_ratings(monthly):
+        safeties.append(('sfw', SFW_RATINGS))
+    else:
+        print('  缓存为旧格式（无 rating 分级），跳过 SFW；出 SFW 版需重扫一次')
+    for metric, growth in (('cumulative', False), ('trailing', True)):
+        for safety, ratings in safeties:
+            for zh, name_fn in ((False, name_en), (True, name_zh)):
+                rows = build_rows(monthly, selected, metric, name_fn, nm, ratings)
+                tag = f'{metric}/{safety}/{"中" if zh else "en"}'
+                print(f'[{tag}]:')
+                write_rows(rows, out_file(base, growth=growth, sfw=safety == 'sfw', zh=zh))
 
 
 if __name__ == '__main__':
