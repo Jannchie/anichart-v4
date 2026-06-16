@@ -68,7 +68,6 @@ function createData(id: string, step: number, value: number, overrides: Partial<
     step,
     alpha: overrides.alpha ?? 1,
     raw: overrides.raw ?? { id, step },
-    up: overrides.up ?? false,
   }
   return Object.assign(base, overrides)
 }
@@ -418,7 +417,6 @@ describe('dataprocessor.addtailingframes', () => {
       step,
       alpha: 1, // 起始值无意义，会被 applyVelocity 覆盖
       raw: { id: 'alpha', step },
-      up: false,
       rank: config.topN, // 停在 parking
       blurRank: config.topN,
     })
@@ -447,7 +445,6 @@ describe('dataprocessor.applyvelocity', () => {
     step: overrides.step ?? 0,
     alpha: overrides.alpha ?? 1,
     raw: overrides.raw ?? { id },
-    up: overrides.up ?? false,
     rank,
     blurRank: 0,
     ...overrides,
@@ -847,7 +844,6 @@ describe('dataprocessor.swapalgorithm.dispatch', () => {
       step: 0,
       alpha: 1,
       raw: { id },
-      up: false,
       rank,
       blurRank: 0,
     })
@@ -906,7 +902,6 @@ describe('dataprocessor.applyvelocityaccel', () => {
         step: t,
         alpha: 1,
         raw: { id: e.id },
-        up: false,
         rank: Math.min(idx, topN),
         blurRank: 0,
       })))
@@ -997,7 +992,6 @@ describe('dataprocessor.lookahead 与底边淡变带限速', () => {
         step: t,
         alpha: 1,
         raw: { id: e.id },
-        up: false,
         rank: Math.min(idx, topN),
         blurRank: 0,
       })))

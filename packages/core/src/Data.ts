@@ -5,7 +5,6 @@ export interface Data {
   step: number
   alpha: number
   raw: any
-  up: boolean
 
   [key: string]: any
 }

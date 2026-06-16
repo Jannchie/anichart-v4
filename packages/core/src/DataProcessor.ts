@@ -142,7 +142,6 @@ export class DataProcessor {
           step: stepList[t],
           alpha: alphaCols[si][t],
           raw: rawCols[si][t],
-          up: false,
           rank: 0,
           blurRank: 0,
           // 入场标记透传给 runVelocity：未满榜入场柱就地淡入（renderAlpha 走 ramp）而非穿底边带。
@@ -645,7 +644,6 @@ export class DataProcessor {
         step: config.getStep(d, i),
         alpha: isMissing ? 0 : 1,
         raw: d,
-        up: false,
       }
       // 把数字样的额外列铺到 Data 上（label 列保留原字符串），方便自定义 accessor 直接读 d.<column>。
       for (const key in d) {

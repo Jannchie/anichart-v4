@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { computeInversionMetrics } from '../utils/inversionMetric'
 
 function bar(id: string, value: number, blurRank: number, alpha = 1): RankedData {
-  return { id, label: id, value, step: 0, alpha, raw: { id }, up: false, rank: blurRank, blurRank }
+  return { id, label: id, value, step: 0, alpha, raw: { id }, rank: blurRank, blurRank }
 }
 
 describe('computeinversionmetrics', () => {
