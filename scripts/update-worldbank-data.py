@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""生成「各国 人口 / CO₂ 排放 / 军费」的 bar chart race（wb-*.csv）。
+"""生成「各国 人口 / CO₂ 排放 / 军费 / 极端贫困人口」的 bar chart race（wb-*.csv）。
 
 数据来自 World Bank 公开 API（无需 key），与 gdp.csv 同源同结构（country,region,year,value），
 复用 playground 的国旗 + 中文名（datasets.ts 的 countryCode / countryZh）。
@@ -51,6 +51,18 @@ COUNTRIES = [
     ('VN', 'Vietnam', 'Asia'), ('ET', 'Ethiopia', 'Africa'),
     ('CD', 'DR Congo', 'Africa'), ('UA', 'Ukraine', 'Europe'),
     ('IL', 'Israel', 'Asia'),
+    # 贫困 race 补充：近年极端贫困人口大国（多为撒哈拉以南非洲），让世界榜单更完整。
+    # 它们在 CO₂/军费/电动车等指标里值很小、进不了 topN，对其它数据集无害。
+    ('TZ', 'Tanzania', 'Africa'), ('MZ', 'Mozambique', 'Africa'),
+    ('UG', 'Uganda', 'Africa'), ('KE', 'Kenya', 'Africa'),
+    ('MG', 'Madagascar', 'Africa'), ('NE', 'Niger', 'Africa'),
+    ('ZM', 'Zambia', 'Africa'), ('MW', 'Malawi', 'Africa'),
+    ('AO', 'Angola', 'Africa'), ('GH', 'Ghana', 'Africa'),
+    ('CI', "Côte d'Ivoire", 'Africa'), ('BF', 'Burkina Faso', 'Africa'),
+    ('ML', 'Mali', 'Africa'), ('SS', 'South Sudan', 'Africa'),
+    ('BI', 'Burundi', 'Africa'), ('NP', 'Nepal', 'Asia'),
+    ('MM', 'Myanmar', 'Asia'), ('YE', 'Yemen', 'Asia'),
+    ('CO', 'Colombia', 'South America'),
 ]
 NAME = {iso: name for iso, name, _ in COUNTRIES}
 REGION = {iso: region for iso, _, region in COUNTRIES}
@@ -63,6 +75,10 @@ ISO3 = {
     'ZA': 'ZAF', 'KR': 'KOR', 'ES': 'ESP', 'SE': 'SWE', 'CH': 'CHE', 'TH': 'THA', 'TR': 'TUR',
     'GB': 'GBR', 'US': 'USA', 'BD': 'BGD', 'PH': 'PHL', 'VN': 'VNM', 'ET': 'ETH', 'CD': 'COD',
     'UA': 'UKR', 'IL': 'ISR',
+    'TZ': 'TZA', 'MZ': 'MOZ', 'UG': 'UGA', 'KE': 'KEN', 'MG': 'MDG', 'NE': 'NER',
+    'ZM': 'ZMB', 'MW': 'MWI', 'AO': 'AGO', 'GH': 'GHA', 'CI': 'CIV', 'BF': 'BFA',
+    'ML': 'MLI', 'SS': 'SSD', 'BI': 'BDI', 'NP': 'NPL', 'MM': 'MMR', 'YE': 'YEM',
+    'CO': 'COL',
 }
 ISO3_TO_ISO2 = {v: k for k, v in ISO3.items()}
 
@@ -81,6 +97,17 @@ OWID_METRICS = [
     ('wb-wind', 'wind-generation', lambda v: round(v, 1)),                    # 风能发电 TWh
     ('wb-ev', 'electric-car-sales', lambda v: round(v)),                      # 电动车销量 辆/年
 ]
+
+# 各国极端贫困「人数」直接取 World Bank PIP API：贫困率(headcount) × 官方人口(reporting_pop)。
+# fill_gaps=true → 逐年「补齐」(lined-up)序列：调查间用官方 interpolation 填充（含印度 2012–21
+# 空档），末次调查之后用 extrapolation（官方 nowcast/预测），不再靠 race 直线插值。
+# 口径：$3.00/天 (2021 PPP) 现行国际极端贫困线，national 级。中国 1981=97% → 2019 起为 0。
+POVERTY_PPP = 2021
+POVERTY_LINE = 3
+# 保留全部 estimation_type（survey/interpolation/extrapolation/CMD），这样每国逐年都有值（含贫困
+# 大国），榜单不因「只有富国年年调查」而失真。但 2023–2025 对多数贫困国是 WB「预测」非实测
+# （见 wb-poverty.md 局限）。截到 2025（WB nowcast 视野；2026 多为占位/平推）。
+POVERTY_MAX_YEAR = 2025
 
 
 def fetch(indicator: str) -> list[tuple[str, int, float]]:
@@ -108,6 +135,33 @@ def fetch_owid(slug: str) -> list[tuple[str, int, float]]:
     for row in rd[1:]:
         if len(row) > 3 and row[1] in ISO3_TO_ISO2 and row[3] not in ('', 'NA'):
             out.append((ISO3_TO_ISO2[row[1]], int(row[2]), float(row[3])))
+    return out
+
+
+def fetch_poverty() -> list[tuple[str, int, float]]:
+    """World Bank PIP（fill_gaps 逐年补齐）→ 各国极端贫困人口数（iso2, year, 人数）。
+    人数 = headcount × reporting_pop（官方口径）；取 national 级，截到 POVERTY_MAX_YEAR。"""
+    url = (f'https://api.worldbank.org/pip/v1/pip?country=all&year=all'
+           f'&povline={POVERTY_LINE}&ppp_version={POVERTY_PPP}&fill_gaps=true&format=csv')
+    req = urllib.request.Request(url, headers=UA)
+    with urllib.request.urlopen(req, timeout=180) as r:
+        rd = list(csv.reader(io.StringIO(r.read().decode('utf-8'))))
+    h = rd[0]
+    iC, iY, iHC = h.index('country_code'), h.index('reporting_year'), h.index('headcount')
+    iRP, iRL = h.index('reporting_pop'), h.index('reporting_level')
+    seen, out = set(), []
+    for row in rd[1:]:
+        code = row[iC]
+        if code not in ISO3_TO_ISO2 or row[iRL] != 'national':
+            continue
+        try:
+            iso, year, n = ISO3_TO_ISO2[code], int(row[iY]), float(row[iHC]) * float(row[iRP])
+        except ValueError:
+            continue
+        if year > POVERTY_MAX_YEAR or (iso, year) in seen:  # 截断预测/富国偏置段；防御重复 spell
+            continue
+        seen.add((iso, year))
+        out.append((iso, year, n))
     return out
 
 
@@ -139,10 +193,12 @@ def write_rows(rows: list[dict], base: str) -> None:
 
 
 def main() -> None:
-    jobs = [('wb', b, ind, t) for b, ind, t in METRICS] + [('owid', b, s, t) for b, s, t in OWID_METRICS]
+    jobs = ([('wb', b, ind, t) for b, ind, t in METRICS]
+            + [('owid', b, s, t) for b, s, t in OWID_METRICS]
+            + [('poverty', 'wb-poverty', 'pip', lambda v: round(v))])
     for src, base, key, transform in jobs:
         try:
-            raw = fetch(key) if src == 'wb' else fetch_owid(key)
+            raw = fetch(key) if src == 'wb' else fetch_poverty() if src == 'poverty' else fetch_owid(key)
             rows = build_rows(raw, transform)
             if rows:
                 write_rows(rows, base)
