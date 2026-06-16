@@ -3,6 +3,7 @@ import { AA_DURATION_IN_FRAMES, AA_FPS, AAComposition } from './AAComposition'
 import { AACompositionZh } from './AACompositionZh'
 import { BaseComposition } from './baseComposition'
 import { EV_DURATION_IN_FRAMES, EV_FPS, EVCompositionZh, EVCompositionZhVertical } from './EVCompositionZh'
+import { POVERTY_DURATION_IN_FRAMES, POVERTY_FPS, PovertyCompositionZh, PovertyCompositionZhVertical } from './PovertyCompositionZh'
 import { STEAM_DURATION_IN_FRAMES, STEAM_FPS, SteamCompositionZh } from './SteamCompositionZh'
 
 export const RemotionRoot: React.FC = () => {
@@ -57,6 +58,24 @@ export const RemotionRoot: React.FC = () => {
         // 竖屏 9:16 特供抖音等手机端；时间轴 / BGM 与横屏版一致。
         durationInFrames={EV_DURATION_IN_FRAMES}
         fps={EV_FPS}
+        width={1080}
+        height={1920}
+      />
+      <Composition
+        id="PovertyZh"
+        component={PovertyCompositionZh}
+        // 各国极端贫困人口（World Bank PIP）。总长 = BGM violin-ledger.wav(133.3s)；中国归零对齐小提琴高潮。
+        durationInFrames={POVERTY_DURATION_IN_FRAMES}
+        fps={POVERTY_FPS}
+        width={1920}
+        height={1080}
+      />
+      <Composition
+        id="PovertyZhVertical"
+        component={PovertyCompositionZhVertical}
+        // 竖屏 9:16 特供抖音；时间轴与横屏版一致。
+        durationInFrames={POVERTY_DURATION_IN_FRAMES}
+        fps={POVERTY_FPS}
         width={1080}
         height={1920}
       />
